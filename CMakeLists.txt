@@ -10,11 +10,11 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_action REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
-find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(nav2_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 
 
 # uncomment the following section in order to fill in
@@ -28,7 +28,8 @@ ament_target_dependencies(neo_docking
   tf2_ros
   sensor_msgs
   geometry_msgs
-  nav_msgs
+  nav2_msgs
+  std_srvs
   )
 
 target_include_directories(neo_docking PUBLIC
