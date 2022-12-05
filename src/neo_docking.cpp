@@ -51,12 +51,12 @@ public:
   rclcpp_action::Client<nav2_msgs::action::FollowWaypoints>::SendGoalOptions send_goal_options;
 
   NeoDocking()
-  : Node("neo_docking")
+  : Node("neo_docking2")
   {
-    this->declare_parameter<std::vector<double>>("Pose", {-1, 0, 0});
+    this->declare_parameter<std::vector<double>>("pose", {-1, 0, 0});
     this->declare_parameter<std::vector<double>>("orientation", {0, 0, 0.707, 0.707});
 
-    this->get_parameter("Pose", pose_array_);
+    this->get_parameter("pose", pose_array_);
     this->get_parameter("orientation", orientation_array_);
 
     tf_static_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);

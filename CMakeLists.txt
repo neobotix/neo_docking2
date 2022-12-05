@@ -21,9 +21,9 @@ find_package(std_srvs REQUIRED)
 # further dependencies manually.
 # find_package(<dependency> REQUIRED)
 
-add_executable(neo_docking src/neo_docking.cpp)
+add_executable(neo_docking2 src/neo_docking.cpp)
 
-ament_target_dependencies(neo_docking
+ament_target_dependencies(neo_docking2
   rclcpp
   tf2_ros
   sensor_msgs
@@ -32,13 +32,16 @@ ament_target_dependencies(neo_docking
   std_srvs
   )
 
-target_include_directories(neo_docking PUBLIC
+target_include_directories(neo_docking2 PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
-target_compile_features(neo_docking PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
+target_compile_features(neo_docking2 PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
 
-install(TARGETS neo_docking
+install(TARGETS neo_docking2
   DESTINATION lib/${PROJECT_NAME})
+
+install(DIRECTORY launch
+  DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
