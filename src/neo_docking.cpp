@@ -22,31 +22,36 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
  *********************************************************************/
 
-#include <cstdio>
-#include "rclcpp/rclcpp.hpp"
-#include <chrono>
-
-#include "geometry_msgs/msg/transform_stamped.hpp"
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2/LinearMath/Transform.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/create_timer_ros.h>
-#include "tf2_ros/static_transform_broadcaster.h"
 #include <tf2_ros/transform_listener.h>
 
+#include <chrono>
+#include <cstdio>
+#include "tf2_ros/static_transform_broadcaster.h"
+
+#include "rclcpp/rclcpp.hpp"
+#include "geometry_msgs/msg/transform_stamped.hpp"
 #include "nav2_msgs/action/follow_waypoints.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
-
 #include "std_srvs/srv/empty.hpp"
 
 using std::placeholders::_1;
 using std::placeholders::_2;
 using namespace std::chrono_literals;
 
-class NeoDocking : public rclcpp::Node
+class NeoDocking
+  : public rclcpp::Node
 {
 public:
-  NeoDocking() : Node("neo_docking") 
+  using WaypointFollowerGoalHandle =
+    rclcpp_action::ClientGoalHandle<nav2_msgs::action::FollowWaypoints>;
+  rclcpp_action::Client<nav2_msgs::action::FollowWaypoints>::SendGoalOptions send_goal_options;
+
+  NeoDocking()
+  : Node("neo_docking")
   {
     this->declare_parameter<std::vector<double>>("Pose", {-1, 0, 0});
     this->declare_parameter<std::vector<double>>("orientation", {0, 0, 0.707, 0.707});
@@ -76,13 +81,39 @@ public:
       "follow_waypoints");
 
     waypoint_follower_goal_ = nav2_msgs::action::FollowWaypoints::Goal();
+
+    // Seperate thread for recieving the result_callback
+    this->timer_ = this->create_wall_timer(
+      std::chrono::milliseconds(100),
+      std::bind(&NeoDocking::helper_thread, this));
+
+    send_goal_options =
+      rclcpp_action::Client<nav2_msgs::action::FollowWaypoints>::SendGoalOptions();
+  }
+
+  void helper_thread()
+  {
+    send_goal_options.result_callback =
+      std::bind(&NeoDocking::result_callback, this, _1);
+    rclcpp::spin_some(client_node_);
   }
 
 private:
+  void result_callback(const WaypointFollowerGoalHandle::WrappedResult & result)
+  {
+    if (result.code == rclcpp_action::ResultCode::SUCCEEDED) {
+      on_process_ = false;
+      dock_poses_.clear();
+      RCLCPP_INFO(client_node_->get_logger(), "Process finished");
+    }
+  }
+
+  // Broadcasting static transforms for the different poses involved in docking
   void make_transforms()
   {
     geometry_msgs::msg::TransformStamped t;
 
+    // 1. Broadcast static tf pose for the exact position of the docking station
     t.header.stamp = this->get_clock()->now();
     t.header.frame_id = "map";
     t.child_frame_id = "docking_station";
@@ -98,6 +129,7 @@ private:
 
     tf_static_broadcaster_->sendTransform(t);
 
+    // 2. Broadcast static tf pose for the pre-pose of the docking station
     geometry_msgs::msg::TransformStamped t1;
 
     t1.header.stamp = this->get_clock()->now();
@@ -110,8 +142,9 @@ private:
     tf_static_broadcaster_->sendTransform(t1);
   }
 
+  // Converts Transformpose to PoseStamped
   geometry_msgs::msg::PoseStamped ConvertTransformToPose(
-    geometry_msgs::msg::TransformStamped transform_pose)
+    geometry_msgs::msg::TransformStamped & transform_pose)
   {
     geometry_msgs::msg::PoseStamped convert_pose;
     convert_pose.header = transform_pose.header;
@@ -140,19 +173,10 @@ private:
     // Send the goal poses
     waypoint_follower_goal_.poses = poses;
 
-    // Enable result awareness by providing an empty lambda function
-    auto send_goal_options =
-      rclcpp_action::Client<nav2_msgs::action::FollowWaypoints>::SendGoalOptions();
-
-    send_goal_options.result_callback = [this](WaypointFollowerGoalHandle::WrappedResult result) {
-        waypoint_follower_goal_handle_.reset();
-        if (result.code == rclcpp_action::ResultCode::SUCCEEDED) {
-          on_process_ = false;
-        }
-      };
-
     auto future_goal_handle =
       waypoint_follower_action_client_->async_send_goal(waypoint_follower_goal_, send_goal_options);
+
+    // spin the client node to check if the goal has reached
     if (rclcpp::spin_until_future_complete(client_node_, future_goal_handle) !=
       rclcpp::FutureReturnCode::SUCCESS)
     {
@@ -168,8 +192,9 @@ private:
     }
   }
 
-  bool dock(std::shared_ptr<std_srvs::srv::Empty::Request> /*req*/,
-    std::shared_ptr<std_srvs::srv::Empty::Response> /*res*/)
+  bool dock(
+    std::shared_ptr<std_srvs::srv::Empty::Request>/*req*/,
+    std::shared_ptr<std_srvs::srv::Empty::Response>/*res*/)
   {
     // clear the stored poses
     if (on_process_) {
@@ -178,12 +203,11 @@ private:
     }
 
     on_process_ = true;
-    dock_poses_.clear();
     geometry_msgs::msg::TransformStamped tempTransform;
 
     try {
-      tempTransform = buffer_->lookupTransform("map", "pre_dock", tf2::TimePointZero);  
-    } catch(const std::exception& ex) {
+      tempTransform = buffer_->lookupTransform("map", "pre_dock", tf2::TimePointZero);
+    } catch (const std::exception & ex) {
       std::cout << "no trasformation found between map and pre_dock" << std::endl;
       return false;
     }
@@ -192,8 +216,8 @@ private:
     dock_poses_.emplace_back(pre_dock_pose);
 
     try {
-      tempTransform = buffer_->lookupTransform("map", "docking_station", tf2::TimePointZero);  
-    } catch(const std::exception& ex) {
+      tempTransform = buffer_->lookupTransform("map", "docking_station", tf2::TimePointZero);
+    } catch (const std::exception & ex) {
       std::cout << "no trasformation found between map and pre_dock" << std::endl;
       return false;
     }
@@ -206,8 +230,9 @@ private:
     return true;
   }
 
-  bool undock(std::shared_ptr<std_srvs::srv::Empty::Request> /*req*/,
-    std::shared_ptr<std_srvs::srv::Empty::Response> /*res*/)
+  bool undock(
+    std::shared_ptr<std_srvs::srv::Empty::Request>/*req*/,
+    std::shared_ptr<std_srvs::srv::Empty::Response>/*res*/)
   {
     if (on_process_) {
       RCLCPP_ERROR(this->get_logger(), "Wait for the process to complete");
@@ -215,14 +240,11 @@ private:
     }
 
     on_process_ = true;
-    // clear the stored poses
-    dock_poses_.clear();
-
     geometry_msgs::msg::TransformStamped tempTransform;
 
     try {
-      tempTransform = buffer_->lookupTransform("map", "pre_dock", tf2::TimePointZero);  
-    } catch(const std::exception& ex) {
+      tempTransform = buffer_->lookupTransform("map", "pre_dock", tf2::TimePointZero);
+    } catch (const std::exception & ex) {
       std::cout << "no trasformation found between map and pre_dock" << std::endl;
       return false;
     }
@@ -237,12 +259,9 @@ private:
   std::shared_ptr<tf2_ros::StaticTransformBroadcaster> tf_static_broadcaster_;
   std::vector<double> pose_array_;
   std::vector<double> orientation_array_;
-  
-  using WaypointFollowerGoalHandle =
-    rclcpp_action::ClientGoalHandle<nav2_msgs::action::FollowWaypoints>;
   WaypointFollowerGoalHandle::SharedPtr waypoint_follower_goal_handle_;
   nav2_msgs::action::FollowWaypoints::Goal waypoint_follower_goal_;
-  
+
   rclcpp_action::Client<nav2_msgs::action::FollowWaypoints>::SharedPtr
     waypoint_follower_action_client_;
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr docking_srv_;
@@ -256,12 +275,11 @@ private:
   std::shared_ptr<rclcpp::Node> client_node_;
 
   bool on_process_ = false;
-
+  rclcpp::TimerBase::SharedPtr timer_;
 };
 
 int main(int argc, char ** argv)
 {
-  
   rclcpp::init(argc, argv);
   auto nh = std::make_shared<NeoDocking>();
   rclcpp::spin(nh);
