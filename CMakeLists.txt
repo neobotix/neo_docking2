@@ -15,7 +15,7 @@ find_package(sensor_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(nav2_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
-
+find_package(yaml_cpp_vendor REQUIRED)
 
 # uncomment the following section in order to fill in
 # further dependencies manually.
@@ -29,6 +29,7 @@ ament_target_dependencies(neo_docking2
   sensor_msgs
   geometry_msgs
   nav2_msgs
+  yaml_cpp_vendor
   std_srvs
   )
 
