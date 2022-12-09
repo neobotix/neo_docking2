@@ -37,6 +37,7 @@ SOFTWARE.
 
 #include "rclcpp/rclcpp.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
+#include "geometry_msgs/msg/twist.hpp"
 #include "nav2_msgs/action/follow_waypoints.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
 #include "std_srvs/srv/empty.hpp"
@@ -83,6 +84,8 @@ public:
 
     client_node_ = std::make_shared<rclcpp::Node>("docking_client_node");
 
+    vel_pub = this->create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 1);
+
     waypoint_follower_action_client_ =
       rclcpp_action::create_client<nav2_msgs::action::FollowWaypoints>(
       client_node_,
@@ -112,7 +115,7 @@ private:
     if (result.code == rclcpp_action::ResultCode::SUCCEEDED) {
       on_process_ = false;
       dock_poses_.clear();
-      RCLCPP_INFO(client_node_->get_logger(), "Process finished");
+      RCLCPP_INFO(client_node_->get_logger(), "Docking finished");
     }
   }
 
@@ -212,6 +215,14 @@ private:
 
     on_process_ = true;
     geometry_msgs::msg::TransformStamped tempTransform;
+    geometry_msgs::msg::TransformStamped checkTransform;
+
+    try {
+        checkTransform = buffer_->lookupTransform("map", "base_footprint", tf2::TimePointZero);
+      } catch (const std::exception & ex) {
+        std::cout << "no trasformation found between map and base_footprint" << std::endl;
+        return false;
+      }
 
     try {
       tempTransform = buffer_->lookupTransform("map", "pre_dock", tf2::TimePointZero);
@@ -233,6 +244,15 @@ private:
     geometry_msgs::msg::PoseStamped dock_pose = ConvertTransformToPose(tempTransform);
     dock_poses_.emplace_back(dock_pose);
 
+    // Check if the robot is in the docking position, if so do nothing
+    if (abs(checkTransform.transform.translation.x -
+      tempTransform.transform.translation.x) < 0.05) {
+      RCLCPP_ERROR(this->get_logger(), "Still in the docking position");
+      on_process_ = false;
+      dock_poses_.clear();
+      return false;
+    }
+
     startWaypointFollowing(dock_poses_);
 
     return true;
@@ -249,18 +269,56 @@ private:
 
     on_process_ = true;
     geometry_msgs::msg::TransformStamped tempTransform;
+    geometry_msgs::msg::TransformStamped checkTransform;
+
+    double distance = 0.0;
 
     try {
-      tempTransform = buffer_->lookupTransform("map", "pre_dock", tf2::TimePointZero);
-    } catch (const std::exception & ex) {
-      std::cout << "no trasformation found between map and pre_dock" << std::endl;
+        tempTransform = buffer_->lookupTransform("map", "base_footprint", tf2::TimePointZero);
+      } catch (const std::exception & ex) {
+        std::cout << "no trasformation found between map and base_footprint" << std::endl;
+        return false;
+      }
+
+    try {
+        checkTransform = buffer_->lookupTransform("map", "docking_station", tf2::TimePointZero);
+      } catch (const std::exception & ex) {
+        std::cout << "no trasformation found between map and pre_dock" << std::endl;
+        return false;
+      }
+
+    if (abs(tempTransform.transform.translation.x -
+      checkTransform.transform.translation.x) > 0.05) {
+      RCLCPP_ERROR(this->get_logger(), "Not in the docking position");
+      on_process_ = false;
       return false;
     }
 
-    geometry_msgs::msg::PoseStamped pre_dock_pose = ConvertTransformToPose(tempTransform);
-    dock_poses_.emplace_back(pre_dock_pose);
+    auto robot_pose = tempTransform.transform.translation.x;
+    geometry_msgs::msg::Twist twist_vel;
 
-    startWaypointFollowing(dock_poses_);
+    while (distance < 0.5)
+    {
+      try {
+        tempTransform = buffer_->lookupTransform("map", "base_footprint", tf2::TimePointZero);
+      } catch (const std::exception & ex) {
+        std::cout << "no trasformation found between map and base_footprint" << std::endl;
+        return false;
+      }
+      distance = abs(abs(robot_pose) - abs(tempTransform.transform.translation.x));
+      twist_vel.linear.x = -0.1;
+
+      vel_pub->publish(twist_vel);
+    }
+
+    // Setting 0 velocity
+    twist_vel.linear.x = 0.0;
+    vel_pub->publish(twist_vel);
+
+    // Process finished
+    on_process_ = false;
+    RCLCPP_INFO(client_node_->get_logger(), "Undocking finished");
+
     return true;
   }
 
@@ -332,7 +390,9 @@ private:
   std::shared_ptr<rclcpp::Node> client_node_;
 
   bool on_process_ = false;
+
   rclcpp::TimerBase::SharedPtr timer_;
+  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr vel_pub;
 };
 
 int main(int argc, char ** argv)
