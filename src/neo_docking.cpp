@@ -130,10 +130,10 @@ private:
     t.transform.translation.y = pose_array_[1];
     t.transform.translation.z = pose_array_[2];
 
-    t.transform.rotation.x = orientation_array_[0];
-    t.transform.rotation.y = orientation_array_[1];
-    t.transform.rotation.z = orientation_array_[2];
-    t.transform.rotation.w = orientation_array_[3];
+    t.transform.rotation.x = orientation_array_[1];
+    t.transform.rotation.y = orientation_array_[2];
+    t.transform.rotation.z = orientation_array_[3];
+    t.transform.rotation.w = orientation_array_[0];
 
     tf_static_broadcaster_->sendTransform(t);
 
