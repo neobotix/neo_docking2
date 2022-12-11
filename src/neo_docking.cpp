@@ -110,6 +110,16 @@ public:
   }
 
 private:
+  inline double euclidean_distance(
+    const geometry_msgs::msg::TransformStamped & pos1,
+    const geometry_msgs::msg::TransformStamped & pos2)
+  {
+    double dx = pos1.transform.translation.x - pos2.transform.translation.x;
+    double dy = pos1.transform.translation.y - pos2.transform.translation.y;
+
+    return std::hypot(dx, dy);
+  }
+
   void result_callback(const WaypointFollowerGoalHandle::WrappedResult & result)
   {
     if (result.code == rclcpp_action::ResultCode::SUCCEEDED) {
@@ -213,16 +223,21 @@ private:
       return false;
     }
 
+    RCLCPP_INFO(this->get_logger(), "Starting to dock");
+
     on_process_ = true;
+
+    /** Couple of variables to store the robot, pre-dock
+     * and docking station positions in the map **/
     geometry_msgs::msg::TransformStamped tempTransform;
-    geometry_msgs::msg::TransformStamped checkTransform;
+    geometry_msgs::msg::TransformStamped robot_pose;
 
     try {
-        checkTransform = buffer_->lookupTransform("map", "base_footprint", tf2::TimePointZero);
-      } catch (const std::exception & ex) {
-        std::cout << "no trasformation found between map and base_footprint" << std::endl;
-        return false;
-      }
+      robot_pose = buffer_->lookupTransform("map", "base_footprint", tf2::TimePointZero);
+    } catch (const std::exception & ex) {
+      std::cout << "no trasformation found between map and base_footprint" << std::endl;
+      return false;
+    }
 
     try {
       tempTransform = buffer_->lookupTransform("map", "pre_dock", tf2::TimePointZero);
@@ -245,8 +260,7 @@ private:
     dock_poses_.emplace_back(dock_pose);
 
     // Check if the robot is in the docking position, if so do nothing
-    if (abs(checkTransform.transform.translation.x -
-      tempTransform.transform.translation.x) < 0.05) {
+    if (euclidean_distance(tempTransform, robot_pose) < 0.05) {
       RCLCPP_ERROR(this->get_logger(), "Still in the docking position");
       on_process_ = false;
       dock_poses_.clear();
@@ -267,45 +281,49 @@ private:
       return false;
     }
 
+    RCLCPP_INFO(this->get_logger(), "Starting to undock");
+
     on_process_ = true;
-    geometry_msgs::msg::TransformStamped tempTransform;
+
+    /** Couple of variables to store the robot, pre-dock
+     * and docking station positions in the map **/
+
+    geometry_msgs::msg::TransformStamped robot_pose;
     geometry_msgs::msg::TransformStamped checkTransform;
 
     double distance = 0.0;
 
     try {
-        tempTransform = buffer_->lookupTransform("map", "base_footprint", tf2::TimePointZero);
-      } catch (const std::exception & ex) {
-        std::cout << "no trasformation found between map and base_footprint" << std::endl;
-        return false;
-      }
+      robot_pose = buffer_->lookupTransform("map", "base_footprint", tf2::TimePointZero);
+    } catch (const std::exception & ex) {
+      std::cout << "no trasformation found between map and base_footprint" << std::endl;
+      return false;
+    }
 
     try {
-        checkTransform = buffer_->lookupTransform("map", "docking_station", tf2::TimePointZero);
-      } catch (const std::exception & ex) {
-        std::cout << "no trasformation found between map and pre_dock" << std::endl;
-        return false;
-      }
+      checkTransform = buffer_->lookupTransform("map", "docking_station", tf2::TimePointZero);
+    } catch (const std::exception & ex) {
+      std::cout << "no trasformation found between map and pre_dock" << std::endl;
+      return false;
+    }
 
-    if (abs(tempTransform.transform.translation.x -
-      checkTransform.transform.translation.x) > 0.05) {
+    if (euclidean_distance(robot_pose, checkTransform) > 0.05) {
       RCLCPP_ERROR(this->get_logger(), "Not in the docking position");
       on_process_ = false;
       return false;
     }
 
-    auto robot_pose = tempTransform.transform.translation.x;
+    auto robot_docked_pose = robot_pose;
     geometry_msgs::msg::Twist twist_vel;
 
-    while (distance < 0.5)
-    {
+    while (distance < 0.5) {
       try {
-        tempTransform = buffer_->lookupTransform("map", "base_footprint", tf2::TimePointZero);
+        robot_pose = buffer_->lookupTransform("map", "base_footprint", tf2::TimePointZero);
       } catch (const std::exception & ex) {
         std::cout << "no trasformation found between map and base_footprint" << std::endl;
         return false;
       }
-      distance = abs(abs(robot_pose) - abs(tempTransform.transform.translation.x));
+      distance = euclidean_distance(robot_docked_pose, robot_pose);
       twist_vel.linear.x = -0.1;
 
       vel_pub->publish(twist_vel);
