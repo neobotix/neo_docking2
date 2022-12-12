@@ -161,6 +161,17 @@ private:
     t1.transform.rotation.w = 1.0;
 
     tf_static_broadcaster_->sendTransform(t1);
+
+    // 3. Broadcast static tf pose for the pre-pose2 of the docking station
+    geometry_msgs::msg::TransformStamped t2;
+
+    t2.header.stamp = this->get_clock()->now();
+    t2.header.frame_id = "docking_station";
+    t2.child_frame_id = "pre_dock2";
+
+    t2.transform.translation.x = -0.25;
+    t2.transform.rotation.w = 1.0;
+    tf_static_broadcaster_->sendTransform(t2);
   }
 
   // Converts Transformpose to PoseStamped
@@ -239,6 +250,7 @@ private:
       return false;
     }
 
+    // stage 1
     try {
       tempTransform = buffer_->lookupTransform("map", "pre_dock", tf2::TimePointZero);
     } catch (const std::exception & ex) {
@@ -249,6 +261,18 @@ private:
     geometry_msgs::msg::PoseStamped pre_dock_pose = ConvertTransformToPose(tempTransform);
     dock_poses_.emplace_back(pre_dock_pose);
 
+    // stage 2
+    try {
+      tempTransform = buffer_->lookupTransform("map", "pre_dock2", tf2::TimePointZero);
+    } catch (const std::exception & ex) {
+      std::cout << "no trasformation found between map and pre_dock" << std::endl;
+      return false;
+    }
+
+    geometry_msgs::msg::PoseStamped pre_dock2_pose = ConvertTransformToPose(tempTransform);
+    dock_poses_.emplace_back(pre_dock2_pose);
+
+    // stage 3
     try {
       tempTransform = buffer_->lookupTransform("map", "docking_station", tf2::TimePointZero);
     } catch (const std::exception & ex) {
