@@ -31,6 +31,7 @@ SOFTWARE.
 #include <fstream>
 #include <chrono>
 #include <cstdio>
+#include <cmath>
 
 #include "yaml-cpp/yaml.h"
 #include "tf2_ros/static_transform_broadcaster.h"
@@ -41,6 +42,7 @@ SOFTWARE.
 #include "nav2_msgs/action/follow_waypoints.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
 #include "std_srvs/srv/empty.hpp"
+#include "sensor_msgs/msg/laser_scan.hpp"
 
 using std::placeholders::_1;
 using std::placeholders::_2;
@@ -59,15 +61,21 @@ public:
   {
     this->declare_parameter<std::vector<double>>("pose", {-1, 0, 0});
     this->declare_parameter<std::vector<double>>("orientation", {0, 0, 0.707, 0.707});
+    this->declare_parameter<double>("laser_ref", 0.32);
 
     this->get_parameter("pose", pose_array_);
     this->get_parameter("orientation", orientation_array_);
+    this->get_parameter("laser_ref", laser_ref_);
 
     tf_static_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
 
     // Publish static transforms once at startup
     this->make_transforms();
     dock_poses_.reserve(2);
+
+    // Seperate callback group for laserscan subscription
+    sub_cb_grp_ = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+    options.callback_group = sub_cb_grp_;
 
     // call to dock
     docking_srv_ = this->create_service<std_srvs::srv::Empty>(
@@ -83,6 +91,10 @@ public:
     transform_listener_ = std::make_shared<tf2_ros::TransformListener>(*buffer_);
 
     client_node_ = std::make_shared<rclcpp::Node>("docking_client_node");
+
+    sensor_sub = this->create_subscription<sensor_msgs::msg::LaserScan>(
+      "lidar_1/scan_filtered", 10, std::bind(&NeoDocking::scan_callback, this, _1),
+      options);
 
     vel_pub = this->create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 1);
 
@@ -104,14 +116,71 @@ public:
 
   void helper_thread()
   {
-    send_goal_options.result_callback =
-      std::bind(&NeoDocking::result_callback, this, _1);
+    // Only have the result callback enabled if the control is not in the stage
+    if (!nav_task_finished_) {
+      send_goal_options.result_callback =
+        std::bind(&NeoDocking::result_callback, this, _1);
+    } else {
+      // Stage 3 of docking
+      geometry_msgs::msg::TransformStamped robot_pose;
+      geometry_msgs::msg::TransformStamped checkTransform;
+
+      try {
+        robot_pose = buffer_->lookupTransform("map", "base_footprint", tf2::TimePointZero);
+      } catch (const std::exception & ex) {
+        std::cout << "no trasformation found between map and base_footprint" << std::endl;
+        return;
+      }
+
+      try {
+        checkTransform = buffer_->lookupTransform("map", "docking_station", tf2::TimePointZero);
+      } catch (const std::exception & ex) {
+        std::cout << "no trasformation found between map and docking_station" << std::endl;
+        return;
+      }
+
+      // determine the distance of the robot from docking station
+      double distance = euclidean_distance(robot_pose, checkTransform);
+
+      // additionaly layer check if docking has completed
+      if (distance <= 0.015) {
+        RCLCPP_INFO(client_node_->get_logger(), "Docking finished");
+        on_process_ = false;
+        nav_task_finished_ = false;
+        return;
+      }
+
+      auto robot_docking_pose = checkTransform;
+      geometry_msgs::msg::Twist twist_vel;
+
+      /** setting conditions for the robot to dock
+       * distance between the robot and docking station will vary
+       * depending on the localization. Therefore, using laser-
+       * reference to halt the robot **/
+      if (distance > 0.015 && laser_ref_ < store_laser_ref_) {
+        try {
+          robot_pose = buffer_->lookupTransform("map", "base_footprint", tf2::TimePointZero);
+        } catch (const std::exception & ex) {
+          std::cout << "no trasformation found between map and base_footprint" << std::endl;
+          return;
+        }
+        // Todo: Set the P-Gain from the ROS parameter server
+        twist_vel.linear.x = distance * 0.50;
+        vel_pub->publish(twist_vel);
+      } else {
+        RCLCPP_INFO(client_node_->get_logger(), "Docking finished");
+        twist_vel.linear.x = 0.0;   // Setting 0 velocity
+        vel_pub->publish(twist_vel);
+        on_process_ = false;
+        nav_task_finished_ = false;
+      }
+    }
     rclcpp::spin_some(client_node_);
   }
 
 private:
   inline double euclidean_distance(
-    const geometry_msgs::msg::TransformStamped & pos1,
+    geometry_msgs::msg::TransformStamped & pos1,
     const geometry_msgs::msg::TransformStamped & pos2)
   {
     double dx = pos1.transform.translation.x - pos2.transform.translation.x;
@@ -120,12 +189,17 @@ private:
     return std::hypot(dx, dy);
   }
 
+  void scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr sensor_data)
+  {
+    auto data = sensor_data;
+    store_laser_ref_ = data->ranges[static_cast<int>(data->ranges.size()) / 2];
+  }
+
   void result_callback(const WaypointFollowerGoalHandle::WrappedResult & result)
   {
     if (result.code == rclcpp_action::ResultCode::SUCCEEDED) {
-      on_process_ = false;
       dock_poses_.clear();
-      RCLCPP_INFO(client_node_->get_logger(), "Docking finished");
+      nav_task_finished_ = true;
     }
   }
 
@@ -169,7 +243,7 @@ private:
     t2.header.frame_id = "docking_station";
     t2.child_frame_id = "pre_dock2";
 
-    t2.transform.translation.x = -0.25;
+    t2.transform.translation.x = -0.30;
     t2.transform.rotation.w = 1.0;
     tf_static_broadcaster_->sendTransform(t2);
   }
@@ -182,7 +256,7 @@ private:
     convert_pose.header = transform_pose.header;
     convert_pose.pose.position.x = transform_pose.transform.translation.x;
     convert_pose.pose.position.y = transform_pose.transform.translation.y;
-    convert_pose.pose.position.z = transform_pose.transform.translation.z;
+    convert_pose.pose.position.z = 0.0;
     convert_pose.pose.orientation.x = transform_pose.transform.rotation.x;
     convert_pose.pose.orientation.y = transform_pose.transform.rotation.y;
     convert_pose.pose.orientation.z = transform_pose.transform.rotation.z;
@@ -272,17 +346,6 @@ private:
     geometry_msgs::msg::PoseStamped pre_dock2_pose = ConvertTransformToPose(tempTransform);
     dock_poses_.emplace_back(pre_dock2_pose);
 
-    // stage 3
-    try {
-      tempTransform = buffer_->lookupTransform("map", "docking_station", tf2::TimePointZero);
-    } catch (const std::exception & ex) {
-      std::cout << "no trasformation found between map and pre_dock" << std::endl;
-      return false;
-    }
-
-    geometry_msgs::msg::PoseStamped dock_pose = ConvertTransformToPose(tempTransform);
-    dock_poses_.emplace_back(dock_pose);
-
     // Check if the robot is in the docking position, if so do nothing
     if (euclidean_distance(tempTransform, robot_pose) < 0.05) {
       RCLCPP_ERROR(this->get_logger(), "Still in the docking position");
@@ -331,7 +394,7 @@ private:
       return false;
     }
 
-    if (euclidean_distance(robot_pose, checkTransform) > 0.05) {
+    if (euclidean_distance(robot_pose, checkTransform) > 0.07) {
       RCLCPP_ERROR(this->get_logger(), "Not in the docking position");
       on_process_ = false;
       return false;
@@ -402,6 +465,8 @@ private:
     {robot_pose.pose.orientation.w, robot_pose.pose.orientation.x,
       robot_pose.pose.orientation.y, robot_pose.pose.orientation.z};
     out << YAML::Value << orientation;
+    out << YAML::Key << "laser_ref";
+    out << YAML::Value << store_laser_ref_;
     out << YAML::EndMap;
 
     std::ofstream fout("src/neo_docking2/launch/dock_pose.yaml");
@@ -423,6 +488,7 @@ private:
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr docking_srv_;
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr undocking_srv_;
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr store_pose_srv_;
+  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr sensor_sub;
 
   std::unique_ptr<tf2_ros::Buffer> buffer_;
   std::shared_ptr<tf2_ros::TransformListener> transform_listener_{nullptr};
@@ -435,13 +501,24 @@ private:
 
   rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr vel_pub;
+
+  rclcpp::CallbackGroup::SharedPtr sub_cb_grp_;
+  rclcpp::SubscriptionOptions options;
+  bool nav_task_finished_ = false;
+
+  double laser_ref_ = 0.0;
+  double store_laser_ref_ = 0.0;
 };
 
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
   auto nh = std::make_shared<NeoDocking>();
-  rclcpp::spin(nh);
+
+  // multiple callback groups means multithreaded executor
+  rclcpp::executors::MultiThreadedExecutor executor;
+  executor.add_node(nh);
+  executor.spin();
 
   return 0;
 }
