@@ -18,6 +18,12 @@ colcon build --symlink-install --packages-select neo_docking2
 ```
 
 Once done you can either 
+  * If you have a robot from Neobotix, then you should use the launch:
+ 
+    ```ros2 launch neo_mp(?)_(?)00-2 docking_navigation.launch.py```
+    
+    the launch can be found under the corresponding robot package. The poses for docking are stored under `dock_pose.yaml`, which can be found under this (neo_docking2) package.
+    
   * launch the node using the given launch file:
   
     ```ros2 launch neo_docking2 docking_launch.py```
@@ -57,7 +63,11 @@ If you have brought the robot and the charging station from us, please remember 
 
  - Once the robot is docked, make sure that you do not pass any velocity commands nor send a navigation goal from RViz. This would cause serious physical damage to the charging station.
  - While storing the poses for the charging station, you do not have to go very deep into the charging station, rather the advisable range would be not more than 2.0 cm.
-  
+
+## Open Issue:
+
+Once you store the pose, it is always necessary for you to check if the values are in `double` data type. Currently there is an issue with the Yaml-CPP not being able to emit 1 or 0 as a `double` data type. See this https://github.com/neobotix/neo_docking2/issues/14 for more details. 
+
 ## RViz plugin:
 
 Coming soon... 
