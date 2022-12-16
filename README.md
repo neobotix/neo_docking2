@@ -1,9 +1,9 @@
 # neo_docking2
 ROS2 package for neo_docking
 
-This docking package is designed to be used with the object for which the positions are known. There are no, perception module (at the moment) to detect the position of the object. 
+This docking package is designed to be used with the object for which the positions are known. There are no, perception modules (at the moment) to detect the position of the object. 
 
-The position of the objects are stored in the yaml file. Currently, we support only one object, which could also be later extended to support multiple use-cases. 
+The position of the objects is stored in the yaml file. Currently, we support only one object, which could also be later extended to support multiple use cases. 
 
 ## To Build:
 
@@ -35,7 +35,7 @@ Available services:
 
 ## The process:
 
-First we need to store the pose of the docking station, it needs to be done manually. Use the teleop node to navigate the robot to the docking position. Once the robot is in the docking position, use the `/store_pose` service to store the docking position. 
+First, we need to store the pose of the docking station, it needs to be done manually. Use the teleop node to navigate the robot to the docking position. Once the robot is in the docking position, use the `/store_pose` service to store the docking position. 
 
 ```ros2 service call /store_pose std_srvs/srv/Empty {}```
 
@@ -53,7 +53,7 @@ Once the process has been initiated, the robot navigates back to the pre-dock po
 
 ## Safety Instruction
 
-If you have brought the robot and the charging station from us, please remember the following points at all the time:
+If you have brought the robot and the charging station from us, please remember the following points at all the times:
 
  - Once the robot is docked, make sure that you do not pass any velocity commands nor send a navigation goal from RViz. This would cause serious physical damage to the charging station.
  - While storing the poses for the charging station, you do not have to go very deep into the charging station, rather the advisable range would be not more than 2.0 cm.
