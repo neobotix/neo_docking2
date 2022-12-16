@@ -50,6 +50,13 @@ To undock, use the service `/undock_and_arm`:
 ```ros2 service call /undock_and_arm std_srvs/srv/Empty {} ```
 
 Once the process has been initiated, the robot navigates back to the pre-dock position.
+
+## Safety Instruction
+
+If you have brought the robot and the charging station from us, please remember the following points at all the time:
+
+ - Once the robot is docked, make sure that you do not pass any velocity commands nor send a navigation goal from RViz. This would cause serious physical damage to the charging station.
+ - While storing the poses for the charging station, you do not have to go very deep into the charging station, rather the advisable range would be not more than 2.0 cm.
   
 ## RViz plugin:
 
