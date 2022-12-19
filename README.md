@@ -68,6 +68,11 @@ If you have brought the robot and the charging station from us, please remember 
 
 Once you store the pose, it is always necessary for you to check if the values are in `double` data type. Currently there is an issue with the Yaml-CPP not being able to emit 1 or 0 as a `double` data type. See this https://github.com/neobotix/neo_docking2/issues/14 for more details. 
 
-## RViz plugin:
+## Video
 
-Coming soon... 
+https://user-images.githubusercontent.com/20242192/208465136-19763651-d1c3-4b4c-baef-2384c6806431.mp4
+
+## RViz plugin
+
+coming soon ...
+
