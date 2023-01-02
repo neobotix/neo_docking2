@@ -1,9 +1,9 @@
 # neo_docking2
-ROS2 package for neo_docking
 
-This docking package is designed to be used with the object for which the positions are known. There are no, perception modules (at the moment) to detect the position of the object. 
+neo_docking2 is a ROS 2 package, which is the spirtual successor of neo_docking.
 
-The position of the objects is stored in the yaml file. Currently, we support only one object, which could also be later extended to support multiple use cases. 
+Like neo_docking, neo_docking2 docks the Neobotix robot autonomously with the charging station. Unlike neo_docking, neo_docking2 does not use a depth camera nor QR tags for detecting the coordinates of the charging contacts. Rather, the user has to once teach the docking position of the robot by manually driving and docking the robot to the charging contacts. The docking coordinates are stored in a yaml file, with the help of a service. Later, the docking coordinates are utilized in a 3-step docking process coupled with Navigation 2.
+
 
 ## To Build:
 
@@ -41,7 +41,7 @@ Available services:
 
 ## The process:
 
-First, we need to store the pose of the docking station, it needs to be done manually. Use the teleop node to navigate the robot to the docking position. Once the robot is in the docking position, use the `/store_pose` service to store the docking position. 
+First, we need to store the pose of the docking station, it needs to be done manually. Use the joystick to navigate the robot to the docking position. Once the robot is in the docking position, use the `/store_pose` service to store the docking position. 
 
 ```ros2 service call /store_pose std_srvs/srv/Empty {}```
 
