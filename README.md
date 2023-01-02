@@ -2,7 +2,7 @@
 
 neo_docking2 is a ROS 2 package, which is the spirtual successor of neo_docking.
 
-Like neo_docking, neo_docking2 docks the Neobotix robot autonomously with the charging station. Unlike neo_docking, neo_docking2 does not use a depth camera nor QR tags for detecting the coordinates of the charging contacts. Rather, the user has to once teach the docking position of the robot by manually driving and docking the robot to the charging contacts. The docking coordinates are stored in a yaml file, with the help of a service. Later, the docking coordinates are utilized in a 3-step docking process coupled with Navigation 2.
+Like neo_docking, neo_docking2 docks the Neobotix robot autonomously with the charging station. Unlike neo_docking, neo_docking2 does not use a depth camera nor QR tags for detecting the coordinates of the charging contacts. Rather, the user has to once teach the docking position of the robot by manually driving (prefarably with a joystick) and docking the robot to the charging contacts. The docking coordinates are stored in a yaml file, with the help of a service. Later, the docking coordinates are utilized in a 3-step docking process coupled with Navigation 2.
 
 
 ## To Build:
