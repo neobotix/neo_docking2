@@ -17,6 +17,8 @@ colcon build --symlink-install --packages-select neo_docking2
 . install/setup.bash
 ```
 
+## To Launch:
+
 Once done you can either 
   * If you have a robot from Neobotix, then you should use the launch:
  
@@ -34,7 +36,7 @@ Once done you can either
   
     ```ros2 run neo_docking2 neo_docking2 --ros-args --params-file src/neo_docking2/launch/dock_pose.yaml```
 
-Available services:
+## Available services:
   * `/go_and_dock`: Initiates docking process
   * `/undock_and_arm`: Undocks and is ready for the next command
   * `/store_pose`: Poses are stored in the `dock_pose.yaml` file, which can be found under the launch directory. 
