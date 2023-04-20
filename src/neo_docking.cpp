@@ -43,6 +43,7 @@ SOFTWARE.
 #include "rclcpp_action/rclcpp_action.hpp"
 #include "std_srvs/srv/empty.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
+#include "neo_perception2/contour_matching.hpp"
 
 using std::placeholders::_1;
 using std::placeholders::_2;
@@ -62,12 +63,16 @@ public:
     this->declare_parameter<std::vector<double>>("pose", {-1, 0, 0});
     this->declare_parameter<std::vector<double>>("orientation", {0, 0, 0.707, 0.707});
     this->declare_parameter<double>("laser_ref", 0.32);
+    this->declare_parameter<bool>("auto_detect", true);
 
     this->get_parameter("pose", pose_array_);
     this->get_parameter("orientation", orientation_array_);
     this->get_parameter("laser_ref", laser_ref_);
+    this->get_parameter("auto_detect", auto_detect_);
 
+    target_cloud = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>);
     tf_static_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
+    pcl::io::loadPCDFile<pcl::PointXYZ> ("cloud_test.pcd", *target_cloud);
 
     // Publish static transforms once at startup
     this->make_transforms();
@@ -92,9 +97,13 @@ public:
 
     client_node_ = std::make_shared<rclcpp::Node>("docking_client_node");
 
-    sensor_sub = this->create_subscription<sensor_msgs::msg::LaserScan>(
-      "lidar_1/scan_filtered", 10, std::bind(&NeoDocking::scan_callback, this, _1),
-      options);
+    if (auto_detect_) {
+      contour_matching = std::make_shared<ContourMatching>(this->create_sub_node("perception"), scan_topic, *target_cloud);
+    } else {
+      sensor_sub = this->create_subscription<sensor_msgs::msg::LaserScan>(
+        "lidar_1/scan_filtered", 10, std::bind(&NeoDocking::scan_callback, this, _1),
+        options);
+    }
 
     vel_pub = this->create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 1);
 
@@ -133,9 +142,9 @@ public:
       }
 
       try {
-        checkTransform = buffer_->lookupTransform("map", "docking_station", tf2::TimePointZero);
+        checkTransform = buffer_->lookupTransform("map", "docking_link", tf2::TimePointZero);
       } catch (const std::exception & ex) {
-        std::cout << "no trasformation found between map and docking_station" << std::endl;
+        std::cout << "no trasformation found between map and docking_link" << std::endl;
         return;
       }
 
@@ -210,25 +219,26 @@ private:
 
     // 1. Broadcast static tf pose for the exact position of the docking station
     t.header.stamp = this->get_clock()->now();
-    t.header.frame_id = "map";
-    t.child_frame_id = "docking_station";
+    if (!auto_detect_) {
+      t.header.frame_id = "map";
+      t.child_frame_id = "docking_link";
 
-    t.transform.translation.x = pose_array_[0];
-    t.transform.translation.y = pose_array_[1];
-    t.transform.translation.z = pose_array_[2];
+      t.transform.translation.x = pose_array_[0];
+      t.transform.translation.y = pose_array_[1];
+      t.transform.translation.z = pose_array_[2];
 
-    t.transform.rotation.x = orientation_array_[1];
-    t.transform.rotation.y = orientation_array_[2];
-    t.transform.rotation.z = orientation_array_[3];
-    t.transform.rotation.w = orientation_array_[0];
-
-    tf_static_broadcaster_->sendTransform(t);
+      t.transform.rotation.x = orientation_array_[1];
+      t.transform.rotation.y = orientation_array_[2];
+      t.transform.rotation.z = orientation_array_[3];
+      t.transform.rotation.w = orientation_array_[0];
+      tf_static_broadcaster_->sendTransform(t);
+    }
 
     // 2. Broadcast static tf pose for the pre-pose of the docking station
     geometry_msgs::msg::TransformStamped t1;
 
     t1.header.stamp = this->get_clock()->now();
-    t1.header.frame_id = "docking_station";
+    t1.header.frame_id = "docking_link";
     t1.child_frame_id = "pre_dock";
 
     t1.transform.translation.x = -0.5;
@@ -240,7 +250,7 @@ private:
     geometry_msgs::msg::TransformStamped t2;
 
     t2.header.stamp = this->get_clock()->now();
-    t2.header.frame_id = "docking_station";
+    t2.header.frame_id = "docking_link";
     t2.child_frame_id = "pre_dock2";
 
     t2.transform.translation.x = -0.30;
@@ -316,6 +326,13 @@ private:
      * and docking station positions in the map **/
     geometry_msgs::msg::TransformStamped tempTransform;
     geometry_msgs::msg::TransformStamped robot_pose;
+    if (auto_detect_) {
+      geometry_msgs::msg::Pose init_guess;
+      init_guess.position.x = 1.0;
+      init_guess.position.y = 1.0;
+      // ToDo: optimal sleep after set initial guess
+      // contour_matching->setInitialGuess(init_guess);
+    }
 
     try {
       robot_pose = buffer_->lookupTransform("map", "base_footprint", tf2::TimePointZero);
@@ -348,6 +365,7 @@ private:
 
     // Check if the robot is in the docking position, if so do nothing
     if (euclidean_distance(tempTransform, robot_pose) < 0.05) {
+
       RCLCPP_ERROR(this->get_logger(), "Still in the docking position");
       on_process_ = false;
       dock_poses_.clear();
@@ -388,7 +406,7 @@ private:
     }
 
     try {
-      checkTransform = buffer_->lookupTransform("map", "docking_station", tf2::TimePointZero);
+      checkTransform = buffer_->lookupTransform("map", "docking_link", tf2::TimePointZero);
     } catch (const std::exception & ex) {
       std::cout << "no trasformation found between map and pre_dock" << std::endl;
       return false;
@@ -489,8 +507,10 @@ private:
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr undocking_srv_;
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr store_pose_srv_;
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr sensor_sub;
+  pcl::PointCloud<pcl::PointXYZ>::Ptr target_cloud;
 
   std::unique_ptr<tf2_ros::Buffer> buffer_;
+  std::shared_ptr<ContourMatching> contour_matching;
   std::shared_ptr<tf2_ros::TransformListener> transform_listener_{nullptr};
   std::vector<geometry_msgs::msg::PoseStamped> dock_poses_;
 
@@ -498,6 +518,8 @@ private:
   std::shared_ptr<rclcpp::Node> client_node_;
 
   bool on_process_ = false;
+  bool auto_detect_ = true;
+  std::string scan_topic = "/scan";
 
   rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr vel_pub;
