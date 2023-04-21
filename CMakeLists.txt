@@ -22,6 +22,8 @@ find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_eigen REQUIRED)
 find_package(tf2_eigen REQUIRED)
 find_package(laser_geometry REQUIRED)
+find_package(neo_srvs2 REQUIRED)
+
 # uncomment the following section in order to fill in
 # further dependencies manually.
 # find_package(<dependency> REQUIRED)
@@ -41,6 +43,7 @@ ament_target_dependencies(neo_docking2
   tf2_geometry_msgs
   tf2_eigen
   laser_geometry
+  neo_srvs2
   )
 
 target_include_directories(neo_docking2 PUBLIC
