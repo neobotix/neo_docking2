@@ -69,16 +69,22 @@ public:
     this->declare_parameter<std::vector<double>>("orientation", {0, 0, 0.707, 0.707});
     this->declare_parameter<double>("laser_ref", 0.32);
     this->declare_parameter<bool>("auto_detect", true);
+    this->declare_parameter<double>("offset_x", 0.25);
+    this->declare_parameter<double>("offset_y", -0.36);
 
     this->get_parameter("pose", pose_array_);
     this->get_parameter("orientation", orientation_array_);
     this->get_parameter("laser_ref", laser_ref_);
     this->get_parameter("auto_detect", auto_detect_);
+    this->get_parameter("offset_x", offset_x_);
+    this->get_parameter("offset_y", offset_y_);
 
-    target_cloud = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>);
-    tf_static_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
-    pcl::io::loadPCDFile<pcl::PointXYZ> ("cloud_test.pcd", *target_cloud);
-
+    if (auto_detect_) {
+      target_cloud = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>);
+      tf_static_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
+      pcl::io::loadPCDFile<pcl::PointXYZ> ("cloud_test.pcd", *target_cloud);
+    }
+    
     // Publish static transforms once at startup
     this->make_transforms();
     dock_poses_.reserve(2);
@@ -103,7 +109,11 @@ public:
     client_node_ = std::make_shared<rclcpp::Node>("docking_client_node");
 
     if (auto_detect_) {
-      contour_matching = std::make_shared<ContourMatching>(this->create_sub_node("perception"), scan_topic, *target_cloud);
+      contour_matching = std::make_shared<ContourMatching>(this->create_sub_node("perception"),
+        scan_topic,
+        *target_cloud,
+        offset_x_,
+        offset_y_);
     } else {
       sensor_sub = this->create_subscription<sensor_msgs::msg::LaserScan>(
         "lidar_1/scan_filtered", 10, std::bind(&NeoDocking::scan_callback, this, _1),
@@ -588,6 +598,8 @@ private:
 
   double laser_ref_ = 0.0;
   double store_laser_ref_ = 0.0;
+  double offset_x_ = 0.0;
+  double offset_y_ = 0.0;
 };
 
 int main(int argc, char ** argv)
