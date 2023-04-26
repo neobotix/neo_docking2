@@ -40,6 +40,7 @@ SOFTWARE.
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "nav2_msgs/action/follow_waypoints.hpp"
+#include "nav2_msgs/action/navigate_to_pose.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
 #include "std_srvs/srv/empty.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
@@ -56,6 +57,10 @@ public:
   using WaypointFollowerGoalHandle =
     rclcpp_action::ClientGoalHandle<nav2_msgs::action::FollowWaypoints>;
   rclcpp_action::Client<nav2_msgs::action::FollowWaypoints>::SendGoalOptions send_goal_options;
+
+  using NavigateToPoseGoalHandle =
+    rclcpp_action::ClientGoalHandle<nav2_msgs::action::NavigateToPose>;
+  rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SendGoalOptions nav_to_goal_options;
 
   NeoDocking()
   : Node("neo_docking2")
@@ -112,6 +117,11 @@ public:
       client_node_,
       "follow_waypoints");
 
+    navigate_to_pose_action_client_ =
+      rclcpp_action::create_client<nav2_msgs::action::NavigateToPose>(
+        client_node_,
+        "navigate_to_pose");
+
     waypoint_follower_goal_ = nav2_msgs::action::FollowWaypoints::Goal();
 
     // Seperate thread for recieving the result_callback
@@ -121,6 +131,9 @@ public:
 
     send_goal_options =
       rclcpp_action::Client<nav2_msgs::action::FollowWaypoints>::SendGoalOptions();
+
+    nav_to_goal_options =
+      rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SendGoalOptions();
   }
 
   void helper_thread()
@@ -129,59 +142,63 @@ public:
     if (!nav_task_finished_) {
       send_goal_options.result_callback =
         std::bind(&NeoDocking::result_callback, this, _1);
+      nav_to_goal_options.result_callback =
+        std::bind(&NeoDocking::result_pre_dock_callback, this, _1);
     } else {
-      // Stage 3 of docking
-      geometry_msgs::msg::TransformStamped robot_pose;
-      geometry_msgs::msg::TransformStamped checkTransform;
+      if (!auto_detect_) {
+        // Stage 3 of docking
+        geometry_msgs::msg::TransformStamped robot_pose;
+        geometry_msgs::msg::TransformStamped checkTransform;
 
-      try {
-        robot_pose = buffer_->lookupTransform("map", "base_footprint", tf2::TimePointZero);
-      } catch (const std::exception & ex) {
-        std::cout << "no trasformation found between map and base_footprint" << std::endl;
-        return;
-      }
-
-      try {
-        checkTransform = buffer_->lookupTransform("map", "docking_link", tf2::TimePointZero);
-      } catch (const std::exception & ex) {
-        std::cout << "no trasformation found between map and docking_link" << std::endl;
-        return;
-      }
-
-      // determine the distance of the robot from docking station
-      double distance = euclidean_distance(robot_pose, checkTransform);
-
-      // additionaly layer check if docking has completed
-      if (distance <= 0.015) {
-        RCLCPP_INFO(client_node_->get_logger(), "Docking finished");
-        on_process_ = false;
-        nav_task_finished_ = false;
-        return;
-      }
-
-      auto robot_docking_pose = checkTransform;
-      geometry_msgs::msg::Twist twist_vel;
-
-      /** setting conditions for the robot to dock
-       * distance between the robot and docking station will vary
-       * depending on the localization. Therefore, using laser-
-       * reference to halt the robot **/
-      if (distance > 0.015 && laser_ref_ < store_laser_ref_) {
         try {
           robot_pose = buffer_->lookupTransform("map", "base_footprint", tf2::TimePointZero);
         } catch (const std::exception & ex) {
           std::cout << "no trasformation found between map and base_footprint" << std::endl;
           return;
         }
-        // Todo: Set the P-Gain from the ROS parameter server
-        twist_vel.linear.x = distance * 0.50;
-        vel_pub->publish(twist_vel);
-      } else {
-        RCLCPP_INFO(client_node_->get_logger(), "Docking finished");
-        twist_vel.linear.x = 0.0;   // Setting 0 velocity
-        vel_pub->publish(twist_vel);
-        on_process_ = false;
-        nav_task_finished_ = false;
+
+        try {
+          checkTransform = buffer_->lookupTransform("map", "docking_link", tf2::TimePointZero);
+        } catch (const std::exception & ex) {
+          std::cout << "no trasformation found between map and docking_link" << std::endl;
+          return;
+        }
+
+        // determine the distance of the robot from docking station
+        double distance = euclidean_distance(robot_pose, checkTransform);
+
+        // additionaly layer check if docking has completed
+        if (distance <= 0.015) {
+          RCLCPP_INFO(client_node_->get_logger(), "Docking finished");
+          on_process_ = false;
+          nav_task_finished_ = false;
+          return;
+        }
+
+        auto robot_docking_pose = checkTransform;
+        geometry_msgs::msg::Twist twist_vel;
+
+        /** setting conditions for the robot to dock
+         * distance between the robot and docking station will vary
+         * depending on the localization. Therefore, using laser-
+         * reference to halt the robot **/
+        if (distance > 0.015 && laser_ref_ < store_laser_ref_) {
+          try {
+            robot_pose = buffer_->lookupTransform("map", "base_footprint", tf2::TimePointZero);
+          } catch (const std::exception & ex) {
+            std::cout << "no trasformation found between map and base_footprint" << std::endl;
+            return;
+          }
+          // Todo: Set the P-Gain from the ROS parameter server
+          twist_vel.linear.x = distance * 0.50;
+          vel_pub->publish(twist_vel);
+        } else {
+          RCLCPP_INFO(client_node_->get_logger(), "Docking finished");
+          twist_vel.linear.x = 0.0;   // Setting 0 velocity
+          vel_pub->publish(twist_vel);
+          on_process_ = false;
+          nav_task_finished_ = false;
+        }
       }
     }
     rclcpp::spin_some(client_node_);
@@ -204,11 +221,22 @@ private:
     store_laser_ref_ = data->ranges[static_cast<int>(data->ranges.size()) / 2];
   }
 
+  void result_pre_dock_callback(const NavigateToPoseGoalHandle::WrappedResult & result)
+  {
+    if (result.code == rclcpp_action::ResultCode::SUCCEEDED
+      && auto_detect_) {
+      pre_dock_succeeded_ = true;
+      lookTransforms();
+      startWaypointFollowing(dock_poses_);
+    }
+  }
+
   void result_callback(const WaypointFollowerGoalHandle::WrappedResult & result)
   {
     if (result.code == rclcpp_action::ResultCode::SUCCEEDED) {
       dock_poses_.clear();
       nav_task_finished_ = true;
+      on_process_ = false;
     }
   }
 
@@ -241,7 +269,7 @@ private:
     t1.header.frame_id = "docking_link";
     t1.child_frame_id = "pre_dock";
 
-    t1.transform.translation.x = -0.5;
+    t1.transform.translation.x = -1.3;
     t1.transform.rotation.w = 1.0;
 
     tf_static_broadcaster_->sendTransform(t1);
@@ -253,7 +281,7 @@ private:
     t2.header.frame_id = "docking_link";
     t2.child_frame_id = "pre_dock2";
 
-    t2.transform.translation.x = -0.30;
+    t2.transform.translation.x = -0.20;
     t2.transform.rotation.w = 1.0;
     tf_static_broadcaster_->sendTransform(t2);
   }
@@ -292,19 +320,84 @@ private:
     auto future_goal_handle =
       waypoint_follower_action_client_->async_send_goal(waypoint_follower_goal_, send_goal_options);
 
-    // spin the client node to check if the goal has reached
-    if (rclcpp::spin_until_future_complete(client_node_, future_goal_handle) !=
-      rclcpp::FutureReturnCode::SUCCESS)
-    {
-      RCLCPP_ERROR(client_node_->get_logger(), "Send goal call failed");
+  }
+
+  void
+  goToPredock(geometry_msgs::msg::PoseStamped pose)
+  {
+    auto is_action_server_ready =
+      navigate_to_pose_action_client_->wait_for_action_server(std::chrono::seconds(5));
+    if (!is_action_server_ready) {
+      RCLCPP_ERROR(
+        client_node_->get_logger(), "follow_waypoints action server is not available."
+        " Is the initial pose set?");
       return;
     }
 
-    // Get the goal handle and save so that we can check on completion in the timer callback
-    waypoint_follower_goal_handle_ = future_goal_handle.get();
-    if (!waypoint_follower_goal_handle_) {
-      RCLCPP_ERROR(client_node_->get_logger(), "Goal was rejected by server, docking failed");
+    // Send the goal poses
+    nav_to_pos_goal_.pose = pose;
+
+    auto future_goal_handle =
+      navigate_to_pose_action_client_->async_send_goal(nav_to_pos_goal_, nav_to_goal_options);
+  }
+
+  void lookTransforms() {
+    /** Couple of variables to store the robot, pre-dock
+     * and docking station positions in the map **/
+    geometry_msgs::msg::TransformStamped tempTransform;
+    geometry_msgs::msg::TransformStamped robot_pose;
+
+    try {
+      robot_pose = buffer_->lookupTransform("map", "base_footprint", tf2::TimePointZero);
+    } catch (const std::exception & ex) {
+      std::cout << "no trasformation found between map and base_footprint" << std::endl;
       return;
+    }
+
+    // stage 1
+    try {
+      tempTransform = buffer_->lookupTransform("map", "pre_dock", tf2::TimePointZero);
+    } catch (const std::exception & ex) {
+      std::cout << "no trasformation found between map and pre_dock" << std::endl;
+      return;
+    }
+
+    geometry_msgs::msg::PoseStamped pre_dock_pose = ConvertTransformToPose(tempTransform);
+    
+    dock_poses_.emplace_back(pre_dock_pose);
+
+    // stage 2
+    try {
+      tempTransform = buffer_->lookupTransform("map", "pre_dock2", tf2::TimePointZero);
+    } catch (const std::exception & ex) {
+      std::cout << "no trasformation found between map and pre_dock2" << std::endl;
+      dock_poses_.clear();
+      return;
+    }
+
+    geometry_msgs::msg::PoseStamped pre_dock2_pose = ConvertTransformToPose(tempTransform);
+    dock_poses_.emplace_back(pre_dock2_pose);
+
+    // stage 3
+    try {
+      tempTransform = buffer_->lookupTransform("map", "docking_link", tf2::TimePointZero);
+    } catch (const std::exception & ex) {
+      std::cout << "no trasformation found between map and docking_link" << std::endl;
+      dock_poses_.clear();
+      return;
+    }
+
+    geometry_msgs::msg::PoseStamped dock_pose = ConvertTransformToPose(tempTransform);
+
+    if (auto_detect_)
+      dock_poses_.emplace_back(dock_pose);
+
+    // Check if the robot is in the docking position, if so do nothing
+    if (euclidean_distance(tempTransform, robot_pose) < 0.05) {
+
+      RCLCPP_ERROR(this->get_logger(), "Still in the docking position");
+      on_process_ = false;
+      dock_poses_.clear();
     }
   }
 
@@ -322,54 +415,11 @@ private:
 
     on_process_ = true;
 
-    /** Couple of variables to store the robot, pre-dock
-     * and docking station positions in the map **/
-    geometry_msgs::msg::TransformStamped tempTransform;
-    geometry_msgs::msg::TransformStamped robot_pose;
+    lookTransforms();
     if (auto_detect_) {
-      geometry_msgs::msg::Pose init_guess;
-      init_guess.position.x = 1.0;
-      init_guess.position.y = 1.0;
-      // ToDo: optimal sleep after set initial guess
-      // contour_matching->setInitialGuess(init_guess);
-    }
-
-    try {
-      robot_pose = buffer_->lookupTransform("map", "base_footprint", tf2::TimePointZero);
-    } catch (const std::exception & ex) {
-      std::cout << "no trasformation found between map and base_footprint" << std::endl;
-      return false;
-    }
-
-    // stage 1
-    try {
-      tempTransform = buffer_->lookupTransform("map", "pre_dock", tf2::TimePointZero);
-    } catch (const std::exception & ex) {
-      std::cout << "no trasformation found between map and pre_dock" << std::endl;
-      return false;
-    }
-
-    geometry_msgs::msg::PoseStamped pre_dock_pose = ConvertTransformToPose(tempTransform);
-    dock_poses_.emplace_back(pre_dock_pose);
-
-    // stage 2
-    try {
-      tempTransform = buffer_->lookupTransform("map", "pre_dock2", tf2::TimePointZero);
-    } catch (const std::exception & ex) {
-      std::cout << "no trasformation found between map and pre_dock" << std::endl;
-      return false;
-    }
-
-    geometry_msgs::msg::PoseStamped pre_dock2_pose = ConvertTransformToPose(tempTransform);
-    dock_poses_.emplace_back(pre_dock2_pose);
-
-    // Check if the robot is in the docking position, if so do nothing
-    if (euclidean_distance(tempTransform, robot_pose) < 0.05) {
-
-      RCLCPP_ERROR(this->get_logger(), "Still in the docking position");
-      on_process_ = false;
+      goToPredock(dock_poses_[0]);
       dock_poses_.clear();
-      return false;
+      return true;
     }
 
     startWaypointFollowing(dock_poses_);
@@ -501,8 +551,14 @@ private:
   WaypointFollowerGoalHandle::SharedPtr waypoint_follower_goal_handle_;
   nav2_msgs::action::FollowWaypoints::Goal waypoint_follower_goal_;
 
+  NavigateToPoseGoalHandle::SharedPtr nav_to_pose_goal_handle_;
+  nav2_msgs::action::NavigateToPose::Goal nav_to_pos_goal_;
+
   rclcpp_action::Client<nav2_msgs::action::FollowWaypoints>::SharedPtr
     waypoint_follower_action_client_;
+  rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SharedPtr
+    navigate_to_pose_action_client_;
+
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr docking_srv_;
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr undocking_srv_;
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr store_pose_srv_;
@@ -519,6 +575,8 @@ private:
 
   bool on_process_ = false;
   bool auto_detect_ = true;
+  bool pre_dock_succeeded_ = false;
+
   std::string scan_topic = "/scan";
 
   rclcpp::TimerBase::SharedPtr timer_;
