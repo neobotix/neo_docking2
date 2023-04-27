@@ -239,7 +239,9 @@ private:
       pre_dock_succeeded_ = true;
       geometry_msgs::msg::Pose init_guess;
       init_guess.position.x = 1.0 - offset_x_;
+      rclcpp::Rate rate(2);
       contour_matching->setInitialGuess(init_guess);
+      rate.sleep();
       lookTransforms();
       startWaypointFollowing(dock_poses_);
     }
@@ -283,7 +285,7 @@ private:
     t1.header.frame_id = "docking_link";
     t1.child_frame_id = "pre_dock";
 
-    t1.transform.translation.x = -1.3;
+    t1.transform.translation.x = -1.3 + offset_x_;
     t1.transform.rotation.w = 1.0;
 
     tf_static_broadcaster_->sendTransform(t1);
