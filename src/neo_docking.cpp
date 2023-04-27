@@ -234,8 +234,12 @@ private:
   void result_pre_dock_callback(const NavigateToPoseGoalHandle::WrappedResult & result)
   {
     if (result.code == rclcpp_action::ResultCode::SUCCEEDED
-      && auto_detect_) {
+      && auto_detect_)
+    {
       pre_dock_succeeded_ = true;
+      geometry_msgs::msg::Pose init_guess;
+      init_guess.position.x = 1.0 - offset_x_;
+      contour_matching->setInitialGuess(init_guess);
       lookTransforms();
       startWaypointFollowing(dock_poses_);
     }
