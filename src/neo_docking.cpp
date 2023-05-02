@@ -243,6 +243,7 @@ private:
       contour_matching->setInitialGuess(init_guess);
       rate.sleep();
       lookTransforms();
+      contour_matching->stopMatching();
       startWaypointFollowing(dock_poses_);
     }
   }
@@ -507,6 +508,9 @@ private:
     // Process finished
     on_process_ = false;
     RCLCPP_INFO(client_node_->get_logger(), "Undocking finished");
+
+    // Restarting Contour matching
+    contour_matching->startMatching();
 
     return true;
   }
