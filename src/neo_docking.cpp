@@ -510,10 +510,12 @@ private:
     RCLCPP_INFO(client_node_->get_logger(), "Undocking finished");
 
     // Restarting Contour matching
-    geometry_msgs::msg::Pose init_pose_;
-    contour_matching->setInitialGuess(init_pose_);
-    contour_matching->startMatching();
-
+    if (auto_detect_) {
+      geometry_msgs::msg::Pose init_pose_;
+      contour_matching->setInitialGuess(init_pose_);
+      contour_matching->startMatching();
+    }
+    
     return true;
   }
 
