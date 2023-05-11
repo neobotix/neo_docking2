@@ -298,7 +298,7 @@ private:
     t2.header.frame_id = "docking_link";
     t2.child_frame_id = "pre_dock2";
 
-    t2.transform.translation.x = -0.20;
+    t2.transform.translation.x = -0.20 * adapt_inverse_;
     t2.transform.rotation.w = 1.0;
     tf_static_broadcaster_->sendTransform(t2);
   }
@@ -436,7 +436,7 @@ private:
         adapt_inverse_ = -1.0;
         make_transforms();
       }
-
+    rclcpp::sleep_for(std::chrono::seconds(1));
     lookTransforms();
     if (auto_detect_) {
       goToPredock(dock_poses_[0]);
