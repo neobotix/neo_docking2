@@ -84,10 +84,6 @@ public:
       tf_static_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
       pcl::io::loadPCDFile<pcl::PointXYZ> ("cloud_test.pcd", *target_cloud);
     }
-    
-    // Publish static transforms once at startup
-    this->make_transforms();
-    dock_poses_.reserve(2);
 
     // Seperate callback group for laserscan subscription
     sub_cb_grp_ = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
@@ -119,6 +115,10 @@ public:
         "lidar_1/scan_filtered", 10, std::bind(&NeoDocking::scan_callback, this, _1),
         options);
     }
+
+    // Publish static transforms once at startup
+    this->make_transforms();
+    dock_poses_.reserve(2);
 
     vel_pub = this->create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 1);
 
