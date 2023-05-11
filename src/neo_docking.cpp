@@ -69,8 +69,8 @@ public:
     this->declare_parameter<std::vector<double>>("orientation", {0, 0, 0.707, 0.707});
     this->declare_parameter<double>("laser_ref", 0.32);
     this->declare_parameter<bool>("auto_detect", true);
-    this->declare_parameter<double>("offset_x", 0.25);
-    this->declare_parameter<double>("offset_y", -0.36);
+    this->declare_parameter<double>("offset_x", -0.70);
+    this->declare_parameter<double>("offset_y", -0.37);
 
     this->get_parameter("pose", pose_array_);
     this->get_parameter("orientation", orientation_array_);
@@ -286,7 +286,7 @@ private:
     t1.header.frame_id = "docking_link";
     t1.child_frame_id = "pre_dock";
 
-    t1.transform.translation.x = -1.3 + offset_x_;
+    t1.transform.translation.x = (-1.3 + offset_x_) * adapt_inverse_;
     t1.transform.rotation.w = 1.0;
 
     tf_static_broadcaster_->sendTransform(t1);
@@ -431,6 +431,11 @@ private:
     RCLCPP_INFO(this->get_logger(), "Starting to dock");
 
     on_process_ = true;
+
+    if (auto_detect_ && contour_matching->isInverted()){
+        adapt_inverse_ = -1.0;
+        make_transforms();
+      }
 
     lookTransforms();
     if (auto_detect_) {
@@ -601,7 +606,7 @@ private:
   bool auto_detect_ = true;
   bool pre_dock_succeeded_ = false;
 
-  std::string scan_topic = "/scan";
+  std::string scan_topic = "/scan2";
 
   rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr vel_pub;
@@ -614,6 +619,7 @@ private:
   double store_laser_ref_ = 0.0;
   double offset_x_ = 0.0;
   double offset_y_ = 0.0;
+  double adapt_inverse_ = 1.0;
 };
 
 int main(int argc, char ** argv)
