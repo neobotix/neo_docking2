@@ -71,6 +71,8 @@ public:
     this->declare_parameter<bool>("auto_detect", true);
     this->declare_parameter<double>("offset_x", 0.70);
     this->declare_parameter<double>("offset_y", -0.37);
+    this->declare_parameter<double>("undock_dist", 0.5);
+    this->declare_parameter<double>("pre_dock_dist", 0.5);
     this->declare_parameter<std::string>("scan_topic", "/scan");
     this->declare_parameter<std::string>("pcd_source", "cloud_test.pcd");
 
@@ -82,6 +84,8 @@ public:
     this->get_parameter("offset_y", offset_y_);
     this->get_parameter("scan_topic", scan_topic_);
     this->get_parameter("pcd_source", pcd_source_);
+    this->get_parameter("undock_dist", undock_dist_);
+    this->get_parameter("pre_dock_dist", pre_dock_dist_);
 
     if (auto_detect_) {
       target_cloud = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>);
@@ -330,7 +334,7 @@ private:
     t2.header.frame_id = "docking_link";
     t2.child_frame_id = "pre_dock2";
 
-    t2.transform.translation.x = -0.5 * adapt_inverse_;
+    t2.transform.translation.x = -pre_dock_dist_ * adapt_inverse_;
     t2.transform.rotation.w = 1.0;
     tf_static_broadcaster_->sendTransform(t2);
   }
@@ -529,7 +533,7 @@ private:
     auto robot_docked_pose = robot_pose;
     geometry_msgs::msg::Twist twist_vel;
 
-    while (distance < 0.5) {
+    while (distance < undock_dist_) {
       try {
         robot_pose = buffer_->lookupTransform("map", "base_footprint", tf2::TimePointZero);
       } catch (const std::exception & ex) {
@@ -662,6 +666,8 @@ private:
   double offset_x_ = 0.0;
   double offset_y_ = 0.0;
   double adapt_inverse_ = 1.0;
+  double undock_dist_ = 0.0;
+  double pre_dock_dist_ = 0.0;
 };
 
 int main(int argc, char ** argv)

@@ -14,7 +14,7 @@ neo_docking2:
     auto_detect: true
 
     # The offset pose from the origin of the docking station
-    offset_x: 0.70
+    offset_x: -0.70
     offset_y: -0.37
 
     # Scan topic that needs to considered for the contour matching
@@ -22,3 +22,11 @@ neo_docking2:
 
     # Point cloud source
     pcd_source: "cloud_test.pcd"
+
+    # Undocking distance - for now only in x-direction
+    undock_dist: 0.5
+
+    # position of the pose before docking - just give the absolute pose
+    # Contour matching algorithm takes of the inverse
+    # In short - No negative value
+    pre_dock_dist: 0.5
