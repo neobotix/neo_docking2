@@ -1,0 +1,24 @@
+neo_docking2:
+  ros__parameters:
+    pose:
+      - -0.06358066201210022
+      - 0.59588623046875
+      - 0.0
+    orientation:
+      - 0.99999992074214661
+      - 0.0
+      - 0.0
+      - 0.00039814030247637615
+
+    # auto detection
+    auto_detect: true
+
+    # The offset pose from the origin of the docking station
+    offset_x: 0.70
+    offset_y: -0.37
+
+    # Scan topic that needs to considered for the contour matching
+    scan_topic: "/scan"
+
+    # Point cloud source
+    pcd_source: "cloud_test.pcd"
