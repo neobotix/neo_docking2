@@ -69,8 +69,8 @@ public:
     this->declare_parameter<std::vector<double>>("orientation", {0, 0, 0.707, 0.707});
     this->declare_parameter<double>("laser_ref", 0.32);
     this->declare_parameter<bool>("auto_detect", true);
-    this->declare_parameter<double>("offset_x", 0.25);
-    this->declare_parameter<double>("offset_y", -0.36);
+    this->declare_parameter<double>("offset_x", -0.70);
+    this->declare_parameter<double>("offset_y", -0.37);
 
     this->get_parameter("pose", pose_array_);
     this->get_parameter("orientation", orientation_array_);
@@ -110,6 +110,10 @@ public:
         *target_cloud,
         offset_x_,
         offset_y_);
+    this->timer_inverse_check_ = this->create_wall_timer(
+      std::chrono::milliseconds(100),
+      std::bind(&NeoDocking::check_inversion, this),
+      sub_cb_grp_);
     } else {
       sensor_sub = this->create_subscription<sensor_msgs::msg::LaserScan>(
         "lidar_1/scan_filtered", 10, std::bind(&NeoDocking::scan_callback, this, _1),
@@ -144,6 +148,16 @@ public:
 
     nav_to_goal_options =
       rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SendGoalOptions();
+  }
+
+  void check_inversion()
+  {
+    if (contour_matching->isInverted()) {
+      adapt_inverse_ = -1.0;
+      make_transforms();
+      timer_inverse_check_->cancel();
+      RCLCPP_INFO(this->get_logger(), "Transform inversion check complete");
+    }
   }
 
   void helper_thread()
@@ -236,6 +250,7 @@ private:
     if (result.code == rclcpp_action::ResultCode::SUCCEEDED
       && auto_detect_)
     {
+      RCLCPP_INFO(this->get_logger(), "pre dock succeded");
       pre_dock_succeeded_ = true;
       geometry_msgs::msg::Pose init_guess;
       init_guess.position.x = 1.0 - offset_x_;
@@ -254,6 +269,7 @@ private:
       dock_poses_.clear();
       nav_task_finished_ = true;
       on_process_ = false;
+      RCLCPP_INFO(this->get_logger(), "docking finished");
     }
   }
 
@@ -286,7 +302,7 @@ private:
     t1.header.frame_id = "docking_link";
     t1.child_frame_id = "pre_dock";
 
-    t1.transform.translation.x = -1.3 + offset_x_;
+    t1.transform.translation.x = (-1.3 + offset_x_) * adapt_inverse_;
     t1.transform.rotation.w = 1.0;
 
     tf_static_broadcaster_->sendTransform(t1);
@@ -298,7 +314,7 @@ private:
     t2.header.frame_id = "docking_link";
     t2.child_frame_id = "pre_dock2";
 
-    t2.transform.translation.x = -0.20;
+    t2.transform.translation.x = -0.20 * adapt_inverse_;
     t2.transform.rotation.w = 1.0;
     tf_static_broadcaster_->sendTransform(t2);
   }
@@ -432,7 +448,12 @@ private:
 
     on_process_ = true;
 
+    if (timer_inverse_check_) {
+      timer_inverse_check_->cancel();
+    }
+
     lookTransforms();
+
     if (auto_detect_) {
       goToPredock(dock_poses_[0]);
       dock_poses_.clear();
@@ -496,7 +517,7 @@ private:
         return false;
       }
       distance = euclidean_distance(robot_docked_pose, robot_pose);
-      twist_vel.linear.x = -0.1;
+      twist_vel.linear.x = -0.1 * adapt_inverse_;
 
       vel_pub->publish(twist_vel);
     }
@@ -514,6 +535,10 @@ private:
       geometry_msgs::msg::Pose init_pose_;
       contour_matching->setInitialGuess(init_pose_);
       contour_matching->startMatching();
+      adapt_inverse_ = 1.0;
+
+      // Restart the timer once again
+      timer_inverse_check_->reset();
     }
     
     return true;
@@ -601,9 +626,10 @@ private:
   bool auto_detect_ = true;
   bool pre_dock_succeeded_ = false;
 
-  std::string scan_topic = "/scan";
+  std::string scan_topic = "/scan2";
 
   rclcpp::TimerBase::SharedPtr timer_;
+  rclcpp::TimerBase::SharedPtr timer_inverse_check_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr vel_pub;
 
   rclcpp::CallbackGroup::SharedPtr sub_cb_grp_;
@@ -614,6 +640,7 @@ private:
   double store_laser_ref_ = 0.0;
   double offset_x_ = 0.0;
   double offset_y_ = 0.0;
+  double adapt_inverse_ = 1.0;
 };
 
 int main(int argc, char ** argv)
