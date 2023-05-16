@@ -69,8 +69,10 @@ public:
     this->declare_parameter<std::vector<double>>("orientation", {0, 0, 0.707, 0.707});
     this->declare_parameter<double>("laser_ref", 0.32);
     this->declare_parameter<bool>("auto_detect", true);
-    this->declare_parameter<double>("offset_x", -0.70);
+    this->declare_parameter<double>("offset_x", 0.70);
     this->declare_parameter<double>("offset_y", -0.37);
+    this->declare_parameter<std::string>("scan_topic", "/scan");
+    this->declare_parameter<std::string>("pcd_source", "cloud_test.pcd");
 
     this->get_parameter("pose", pose_array_);
     this->get_parameter("orientation", orientation_array_);
@@ -78,11 +80,13 @@ public:
     this->get_parameter("auto_detect", auto_detect_);
     this->get_parameter("offset_x", offset_x_);
     this->get_parameter("offset_y", offset_y_);
+    this->get_parameter("scan_topic", scan_topic_);
+    this->get_parameter("pcd_source", pcd_source_);
 
     if (auto_detect_) {
       target_cloud = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>);
       tf_static_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
-      pcl::io::loadPCDFile<pcl::PointXYZ> ("cloud_test.pcd", *target_cloud);
+      pcl::io::loadPCDFile<pcl::PointXYZ> (pcd_source_, *target_cloud);
     }
 
     // Seperate callback group for laserscan subscription
@@ -106,7 +110,7 @@ public:
 
     if (auto_detect_) {
       contour_matching = std::make_shared<ContourMatching>(this->create_sub_node("perception"),
-        scan_topic,
+        scan_topic_,
         *target_cloud,
         offset_x_,
         offset_y_);
@@ -253,12 +257,24 @@ private:
       RCLCPP_INFO(this->get_logger(), "pre dock succeded");
       pre_dock_succeeded_ = true;
       geometry_msgs::msg::Pose init_guess;
+
+      RCLCPP_INFO(
+        this->get_logger(),
+        "resetting initial guess");
+
       init_guess.position.x = 1.0 - offset_x_;
       rclcpp::Rate rate(2);
+
+      // Matching the contour once again
       contour_matching->setInitialGuess(init_guess);
       rate.sleep();
+
+      // Look for and set the docking poses
       lookTransforms();
+
+      // No need to match after setting the docking poses
       contour_matching->stopMatching();
+
       startWaypointFollowing(dock_poses_);
     }
   }
@@ -314,7 +330,7 @@ private:
     t2.header.frame_id = "docking_link";
     t2.child_frame_id = "pre_dock2";
 
-    t2.transform.translation.x = -0.20 * adapt_inverse_;
+    t2.transform.translation.x = -0.5 * adapt_inverse_;
     t2.transform.rotation.w = 1.0;
     tf_static_broadcaster_->sendTransform(t2);
   }
@@ -428,7 +444,7 @@ private:
     // Check if the robot is in the docking position, if so do nothing
     if (euclidean_distance(tempTransform, robot_pose) < 0.05) {
 
-      RCLCPP_ERROR(this->get_logger(), "Still in the docking position");
+      RCLCPP_ERROR(this->get_logger(), "Still in the docking position, call undock");
       on_process_ = false;
       dock_poses_.clear();
     }
@@ -452,7 +468,11 @@ private:
       timer_inverse_check_->cancel();
     }
 
+    // Check and set the docking poses
     lookTransforms();
+    if (dock_poses_.empty()){
+      return false;
+    }
 
     if (auto_detect_) {
       goToPredock(dock_poses_[0]);
@@ -626,7 +646,8 @@ private:
   bool auto_detect_ = true;
   bool pre_dock_succeeded_ = false;
 
-  std::string scan_topic = "/scan2";
+  std::string scan_topic_;
+  std::string pcd_source_;
 
   rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::TimerBase::SharedPtr timer_inverse_check_;
