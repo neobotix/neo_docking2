@@ -16,6 +16,7 @@ neo_docking2:
     # The offset pose from the origin of the docking station
     offset_x: -0.70
     offset_y: -0.37
+    offset_yaw: 0.03 # calibrate it until the necessary orientation for docking is reached
 
     # Scan topic that needs to considered for the contour matching
     scan_topic: "/scan"

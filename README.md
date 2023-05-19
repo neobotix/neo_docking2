@@ -38,6 +38,8 @@ Please make sure to contact us for the neo_perception2 package.
 
 `offset_x`, `offset_y`: Represents the position to which the robot needs to dock with respect to the map frame. For any contour, the left most point would be the origin. Depending upon the position where you want your robot to dock to, the corresponding co-ordinates needs to be given as the offset.
 
+`offset_yaw`: Orients the docking link transforms according to the required orientation with which the robot can align and dock with the stations. 
+
 ## To Launch:
 
 Once done you can either 

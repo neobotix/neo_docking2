@@ -71,6 +71,7 @@ public:
     this->declare_parameter<bool>("auto_detect", true);
     this->declare_parameter<double>("offset_x", 0.70);
     this->declare_parameter<double>("offset_y", -0.37);
+    this->declare_parameter<double>("offset_yaw", 0.03);
     this->declare_parameter<double>("undock_dist", 0.5);
     this->declare_parameter<double>("pre_dock_dist", 0.5);
     this->declare_parameter<std::string>("scan_topic", "/scan");
@@ -82,6 +83,7 @@ public:
     this->get_parameter("auto_detect", auto_detect_);
     this->get_parameter("offset_x", offset_x_);
     this->get_parameter("offset_y", offset_y_);
+    this->get_parameter("offset_y", offset_yaw_);
     this->get_parameter("scan_topic", scan_topic_);
     this->get_parameter("pcd_source", pcd_source_);
     this->get_parameter("undock_dist", undock_dist_);
@@ -117,7 +119,8 @@ public:
         scan_topic_,
         *target_cloud,
         offset_x_,
-        offset_y_);
+        offset_y_,
+        offset_yaw_);
     this->timer_inverse_check_ = this->create_wall_timer(
       std::chrono::milliseconds(100),
       std::bind(&NeoDocking::check_inversion, this),
@@ -665,6 +668,7 @@ private:
   double store_laser_ref_ = 0.0;
   double offset_x_ = 0.0;
   double offset_y_ = 0.0;
+  double offset_yaw_ = 0.0;
   double adapt_inverse_ = 1.0;
   double undock_dist_ = 0.0;
   double pre_dock_dist_ = 0.0;
