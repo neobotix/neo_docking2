@@ -62,24 +62,27 @@ Once done you can either
 ## Available services:
   * `/go_and_dock`: Initiates docking process
   * `/undock_and_arm`: Undocks and is ready for the next command
+  * `/perception/init_contour_pose`: Sets the initial guess
 
 ## The process:
 
-First, we need to store the pose of the docking station, it needs to be done manually. Use the joystick to navigate the robot to the docking position. Once the robot is in the docking position, use the `/store_pose` service to store the docking position. 
+First, we need to give the initial guess of the location of the docking station. For this we need to use the service `/perception/init_contour_pose`. An example for the same is:
 
-```ros2 service call /store_pose std_srvs/srv/Empty {}```
+`ros2 service call /perception/init_contour_pose neo_srvs2/srv/InitializeContourMatching "{init_pose: {position: {x: 0.0, y: -0.0, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: -0.08715, w: 0.9961}}}"`
 
-Next, the docking is a 2 step process, we need to use `/go_and_dock` service to initiate the docking. 
+Note that, in order for the neo_perception2 package to detect the contours, it is essential that the laser scanner see most of the contour. For example, if you are detecting a table and if one leg of the table is not detected, then, the algorithm won't give you efficient results.
+
+Next, the docking is a 3 step process, we need to use `/go_and_dock` service to initiate the docking. 
 
 ```ros2 service call /go_and_dock std_srvs/srv/Empty {} ```
 
-Once the process has been initiated, the robot navigates to a pre-dock position, which is 0.5 meters in front of the docking station. Then in the second step, the robot starts to dock. 
+Once the process has been initiated, the robot navigates to two of the pre-dock positions. The distance to the first pre-dock position defaults to 1.3, whereas the second pre-dock position can be configured from the config files depending upon the requirements from the application. The third step is the docking pose. To reach all the 3 poses, this docking package uses the Nav2 for setting the goals.
 
 To undock, use the service `/undock_and_arm`:
 
 ```ros2 service call /undock_and_arm std_srvs/srv/Empty {} ```
 
-Once the process has been initiated, the robot navigates back to the pre-dock position.
+Once the process has been initiated, the robot navigates to the pose depending upon the user-specified undocking distance.
 
 ## Safety Instruction
 
