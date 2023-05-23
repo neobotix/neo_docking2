@@ -94,7 +94,7 @@ If you have brought the robot and the charging station from us, please remember 
 
 ## Tuning Guide
 
-Setting offset_yaw:
+#### Setting offset_yaw
 
 The value for this parameter can be set to `0.0`, if you are able to record the complete contour that you want to dock with from the docking position, or a position relatively close to it. In most cases, this is not possible. In that case, the offset_yaw should be tuned, so that the robot can easily align and dock. Here is an example, say you want to dock with a table at it's exact centre, and you have recorded thecontour from the robot position as shown in the figure:
 
@@ -108,6 +108,17 @@ To mitigate this issue, we need to address the deviation in the docking_link ang
 
 
 ![matched_wi_offset](https://github.com/neobotix/neo_docking2/assets/20242192/618cae74-11b2-4758-9bb4-ac6f5c5fcebc)
+
+#### Setting offset_x and offset_y
+
+Taking the same example as above of robot docking to a table. Setting the `offset_x` and `offset_y` value to be `0.0`, then it means that the origin of the docking object is in the bottom, left-most position of the docking object as shown in the figure below.
+
+![wo_tuned_offset](https://github.com/neobotix/neo_docking2/assets/20242192/44d08b59-5bd2-4ea5-92ca-eb6d0b9ace65)
+
+Assume that we want to dock the robot to the middke of the table, then the offset values are adjusted, in this case ` offset_x: -0.70 and offset_y: -0.37`. 
+
+![With_tuned_offset](https://github.com/neobotix/neo_docking2/assets/20242192/2624ce77-6596-4f3b-8368-204eeb1b1210)
+
 
 
 ## Video
