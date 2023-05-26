@@ -83,7 +83,7 @@ public:
     this->get_parameter("auto_detect", auto_detect_);
     this->get_parameter("offset_x", offset_x_);
     this->get_parameter("offset_y", offset_y_);
-    this->get_parameter("offset_y", offset_yaw_);
+    this->get_parameter("offset_yaw", offset_yaw_);
     this->get_parameter("scan_topic", scan_topic_);
     this->get_parameter("pcd_source", pcd_source_);
     this->get_parameter("undock_dist", undock_dist_);
