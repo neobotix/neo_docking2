@@ -30,7 +30,7 @@ Please make sure to contact us for the neo_perception2 package.
 
 `scan_topic`: Scanner topic that would be used for contour matching. 
 
-`pcd_source`: File path to the contour source.
+`pcd_source`: File path to the contour source. You can use the neo_perception2 package for recording the contour. 
 
 `pre_dock_dist`: Two pre-docking locations are provided, with the initial pre-docking position automatically set as the default value of 1.3 meters. The second pre-docking pose represents the position that the robot will reach just before reaching the actual docking pose. You can specify the distance to this second pre-docking pose using the pre_dock_dist parameter.
 
