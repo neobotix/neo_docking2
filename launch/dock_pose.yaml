@@ -1,4 +1,4 @@
-neo_docking2:
+/**:
   ros__parameters:
     pose:
       - -0.06358066201210022
