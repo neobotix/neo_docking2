@@ -22,15 +22,17 @@ colcon build --symlink-install --packages-select neo_docking2
 Once done you can either 
   * If you have a robot from Neobotix, then you should use the launch:
  
-    ```ros2 launch neo_mp(?)_(?)00-2 docking_navigation.launch.py```
+    ```ros2 launch neo_mp(?)_(?)00-2 navigation.launch.py params_file:=install/neo_mpo_700-2/share/neo_mp(?)_(?)00-2/configs/navigation/docking_navigation.yaml```
     
     the launch can be found under the corresponding robot package. The poses for docking are stored under `dock_pose.yaml`, which can be found under this (neo_docking2) package.
+
+    Namespaced docking parameters are also available for certain robots. Please read our [official documentation to know more about launching navigation with namespacing.](https://neobotix-docs.de/ros/ros1/autonomous_navigation.html)
     
   * launch the node using the given launch file:
   
     ```ros2 launch neo_docking2 docking_launch.py```
 
-    by default uses the pose from  `dock_pose.yaml`
+    by default uses the pose from  `dock_pose.yaml`. Additionally namespace argument can be utilized for namespacing.
   
   * or just use `ros2 run` to run the executable. Of course, the params can be also passed along with it using the extension `--ros-args` and pointing to the file containing the params
   
