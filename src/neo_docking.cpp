@@ -45,6 +45,7 @@ SOFTWARE.
 #include "std_srvs/srv/empty.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "neo_perception2/contour_matching.hpp"
+#include "neo_srvs2/srv/docking_feedback.hpp"
 
 using std::placeholders::_1;
 using std::placeholders::_2;
@@ -108,6 +109,8 @@ public:
     // call to store poses
     store_pose_srv_ = this->create_service<std_srvs::srv::Empty>(
       "store_pose", std::bind(&NeoDocking::store_pose, this, _1, _2));
+    feedback_srv_ = this->create_service<neo_srvs2::srv::DockingFeedback>(
+      "docking_status", std::bind(&NeoDocking::feedback, this, _1, _2));
 
     buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
     transform_listener_ = std::make_shared<tf2_ros::TransformListener>(*buffer_);
@@ -292,6 +295,8 @@ private:
       dock_poses_.clear();
       nav_task_finished_ = true;
       on_process_ = false;
+      docked_ = true;
+      is_docking_ = false;
       RCLCPP_INFO(this->get_logger(), "docking finished");
     }
   }
@@ -470,6 +475,8 @@ private:
     RCLCPP_INFO(this->get_logger(), "Starting to dock");
 
     on_process_ = true;
+    is_docking_ = true;
+    undocked_ = false;
 
     if (timer_inverse_check_) {
       timer_inverse_check_->cancel();
@@ -504,6 +511,8 @@ private:
     RCLCPP_INFO(this->get_logger(), "Starting to undock");
 
     on_process_ = true;
+    is_undocking_ = true;
+    docked_ = false;
 
     /** Couple of variables to store the robot, pre-dock
      * and docking station positions in the map **/
@@ -557,6 +566,9 @@ private:
     on_process_ = false;
     RCLCPP_INFO(client_node_->get_logger(), "Undocking finished");
 
+    undocked_ = true;
+    is_undocking_ = false;
+
     // Restarting Contour matching
     if (auto_detect_) {
       geometry_msgs::msg::Pose init_pose_;
@@ -569,6 +581,16 @@ private:
     }
     
     return true;
+  }
+
+  void feedback(
+    std::shared_ptr<neo_srvs2::srv::DockingFeedback::Request> /*req*/,
+    std::shared_ptr<neo_srvs2::srv::DockingFeedback::Response> res)
+  {
+    res->is_docking = is_docking_;
+    res->is_undocking = is_undocking_;
+    res->docked = docked_;
+    res->undocked = undocked_;
   }
 
   bool store_pose(
@@ -638,6 +660,8 @@ private:
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr docking_srv_;
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr undocking_srv_;
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr store_pose_srv_;
+  rclcpp::Service<neo_srvs2::srv::DockingFeedback>::SharedPtr feedback_srv_;
+
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr sensor_sub;
   pcl::PointCloud<pcl::PointXYZ>::Ptr target_cloud;
 
@@ -652,6 +676,12 @@ private:
   bool on_process_ = false;
   bool auto_detect_ = true;
   bool pre_dock_succeeded_ = false;
+
+  // Feedback variable
+  bool is_docking_ = false;
+  bool docked_ = false;
+  bool is_undocking_ = false;
+  bool undocked_ = false;
 
   std::string scan_topic_;
   std::string pcd_source_;
