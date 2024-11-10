@@ -16,6 +16,7 @@ find_package(tf2_ros REQUIRED)
 find_package(nav2_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(yaml_cpp_vendor REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
 # uncomment the following section in order to fill in
 # further dependencies manually.
@@ -32,6 +33,8 @@ ament_target_dependencies(neo_docking2
   yaml_cpp_vendor
   std_srvs
   )
+
+target_link_libraries(neo_docking2 yaml-cpp::yaml-cpp)
 
 target_include_directories(neo_docking2 PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
