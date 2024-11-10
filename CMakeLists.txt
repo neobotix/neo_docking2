@@ -17,6 +17,9 @@ find_package(nav2_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(yaml_cpp_vendor REQUIRED)
 find_package(yaml-cpp REQUIRED)
+find_package(neo_srvs2 REQUIRED)
+find_package(neo_msgs2 REQUIRED)
+
 
 # uncomment the following section in order to fill in
 # further dependencies manually.
@@ -32,6 +35,8 @@ ament_target_dependencies(neo_docking2
   nav2_msgs
   yaml_cpp_vendor
   std_srvs
+  neo_msgs2
+  neo_srvs2
   )
 
 target_link_libraries(neo_docking2 yaml-cpp::yaml-cpp)

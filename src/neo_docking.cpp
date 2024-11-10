@@ -43,6 +43,8 @@ SOFTWARE.
 #include "rclcpp_action/rclcpp_action.hpp"
 #include "std_srvs/srv/empty.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
+#include "neo_srvs2/srv/relay_board_set_safety_mode.hpp"
+#include "neo_msgs2/msg/safety_mode.hpp"
 
 using std::placeholders::_1;
 using std::placeholders::_2;
@@ -62,20 +64,21 @@ public:
     this->declare_parameter<std::vector<double>>("pose", {-1, 0, 0});
     this->declare_parameter<std::vector<double>>("orientation", {0, 0, 0.707, 0.707});
     this->declare_parameter<double>("laser_ref", 0.32);
+    this->declare_parameter<bool>("use_nbx_safety", false);
 
     this->get_parameter("pose", pose_array_);
     this->get_parameter("orientation", orientation_array_);
     this->get_parameter("laser_ref", laser_ref_);
+    this->get_parameter("use_nbx_safety", use_nbx_safety_);
 
     tf_static_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
 
     // removing the unnecessary "/" from the namespace
     robot_namespace = this->get_namespace();
 
-    robot_namespace.erase(0,1);
+    robot_namespace.erase(0, 1);
 
-    if (robot_namespace != "/")
-    {
+    if (robot_namespace != "/") {
       RCLCPP_INFO(this->get_logger(), "automatically configuring namespace support");
       docking_station_ = robot_namespace + "/" + docking_station_;
       pre_dock_ = robot_namespace + "/" + pre_dock_;
@@ -100,6 +103,18 @@ public:
     // call to store poses
     store_pose_srv_ = this->create_service<std_srvs::srv::Empty>(
       "store_pose", std::bind(&NeoDocking::store_pose, this, _1, _2));
+
+    // client for handling nbx_safety
+    if (use_nbx_safety_) {
+      safety_client_node_ = std::make_shared<rclcpp::Node>("safety_client_node");
+      set_safety_client_ = this->create_client<neo_srvs2::srv::RelayBoardSetSafetyMode>(
+        "set_safety_mode"
+      );
+      // Seperate thread for handling the safety
+      this->timer_ = this->create_wall_timer(
+        std::chrono::milliseconds(100),
+        std::bind(&NeoDocking::helper_safety_thread, this));
+    }
 
     buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
     transform_listener_ = std::make_shared<tf2_ros::TransformListener>(*buffer_);
@@ -128,6 +143,63 @@ public:
       rclcpp_action::Client<nav2_msgs::action::FollowWaypoints>::SendGoalOptions();
   }
 
+  void helper_safety_thread()
+  {
+    if (set_approaching_) {
+      // Stage 1: SM_APPROACHING
+      set_approaching_ = false;
+      helper_set_safety(neo_msgs2::msg::SafetyMode::SM_APPROACHING);
+      safety_approach_ = true;
+    }
+
+    if (set_departing_) {
+      // Stage 2: SM_DEPARTING
+      safety_approach_ = false;
+      set_departing_ = false;
+      helper_set_safety(neo_msgs2::msg::SafetyMode::SM_DEPARTING);
+      safety_depart_ = true;
+    }
+
+    if (set_none_) {
+      // Stage 3: SM_NONE
+      safety_depart_ = false;
+      set_none_ = false;
+      helper_set_safety(neo_msgs2::msg::SafetyMode::SM_NONE);
+      safety_none_ = true;
+    }
+  }
+
+  void helper_set_safety(const uint8_t & mode)
+  {
+    auto request = std::make_shared<neo_srvs2::srv::RelayBoardSetSafetyMode::Request>();
+    request->set_safety_mode.mode = mode;
+    // ToDo: Set stations from YAML
+    request->station = 0;
+
+    // Check service is available
+    while (!set_safety_client_->wait_for_service(1s)) {
+      if (!rclcpp::ok()) {
+        RCLCPP_ERROR(safety_client_node_->get_logger(),
+        "set_safety_mode service not found. Exiting.");
+        return;
+      }
+      RCLCPP_INFO(safety_client_node_->get_logger(),
+      "waiting for set_safety_mode service to be available");
+    }
+
+    // Send the request to set the safety
+    auto result = set_safety_client_->async_send_request(request);
+
+    // Check if the request was accepted
+    if (rclcpp::spin_until_future_complete(safety_client_node_, result) ==
+      rclcpp::FutureReturnCode::SUCCESS)
+    {
+      RCLCPP_INFO(safety_client_node_->get_logger(), "Safety mode set");
+    } else {
+      RCLCPP_ERROR(safety_client_node_->get_logger(), "Failed to to set the safety mode");
+    }
+  }
+
   void helper_thread()
   {
     // Only have the result callback enabled if the control is not in the stage
@@ -136,6 +208,9 @@ public:
         std::bind(&NeoDocking::result_callback, this, _1);
     } else {
       // Stage 3 of docking
+      if (use_nbx_safety_ && !safety_approach_) {
+        return;
+      }
       geometry_msgs::msg::TransformStamped robot_pose;
       geometry_msgs::msg::TransformStamped checkTransform;
       try {
@@ -160,6 +235,7 @@ public:
         RCLCPP_INFO(client_node_->get_logger(), "Docking finished");
         on_process_ = false;
         nav_task_finished_ = false;
+        set_departing_ = true;
         return;
       }
 
@@ -212,6 +288,9 @@ private:
   {
     if (result.code == rclcpp_action::ResultCode::SUCCEEDED) {
       dock_poses_.clear();
+      if (use_nbx_safety_) {
+        set_approaching_ = true;
+      }
       nav_task_finished_ = true;
     }
   }
@@ -389,6 +468,11 @@ private:
       return false;
     }
 
+    if (use_nbx_safety_ && !safety_depart_) {
+      RCLCPP_ERROR(this->get_logger(), "Safety mode is not switched to departing");
+      return false;
+    }
+
     RCLCPP_INFO(this->get_logger(), "Starting to undock");
 
     on_process_ = true;
@@ -444,6 +528,7 @@ private:
     // Process finished
     on_process_ = false;
     RCLCPP_INFO(client_node_->get_logger(), "Undocking finished");
+    set_none_ = true;
 
     return true;
   }
@@ -510,6 +595,7 @@ private:
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr undocking_srv_;
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr store_pose_srv_;
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr sensor_sub;
+  rclcpp::Client<neo_srvs2::srv::RelayBoardSetSafetyMode>::SharedPtr set_safety_client_;
 
   std::unique_ptr<tf2_ros::Buffer> buffer_;
   std::shared_ptr<tf2_ros::TransformListener> transform_listener_{nullptr};
@@ -517,6 +603,7 @@ private:
 
   // extra node for docking client - for spinning multiple threads
   std::shared_ptr<rclcpp::Node> client_node_;
+  std::shared_ptr<rclcpp::Node> safety_client_node_;
 
   bool on_process_ = false;
 
@@ -526,6 +613,12 @@ private:
   rclcpp::CallbackGroup::SharedPtr sub_cb_grp_;
   rclcpp::SubscriptionOptions options;
   bool nav_task_finished_ = false;
+  bool set_approaching_ = false;
+  bool set_departing_ = false;
+  bool set_none_ = false;
+  bool safety_approach_ = false;
+  bool safety_depart_ = false;
+  bool safety_none_ = false;
 
   double laser_ref_ = 0.0;
   double store_laser_ref_ = 0.0;
@@ -536,6 +629,7 @@ private:
   std::string pre_dock_ = "pre_dock";
   std::string pre_dock_2_ = "pre_dock2";
   std::string base_link_ = "base_footprint";
+  bool use_nbx_safety_ = false;
 };
 
 int main(int argc, char ** argv)
