@@ -111,7 +111,7 @@ public:
         "set_safety_mode"
       );
       // Seperate thread for handling the safety
-      this->timer_ = this->create_wall_timer(
+      this->timer_safety_ = this->create_wall_timer(
         std::chrono::milliseconds(100),
         std::bind(&NeoDocking::helper_safety_thread, this));
     }
@@ -145,31 +145,47 @@ public:
 
   void helper_safety_thread()
   {
+    bool status;
     if (set_approaching_) {
       // Stage 1: SM_APPROACHING
-      set_approaching_ = false;
-      helper_set_safety(neo_msgs2::msg::SafetyMode::SM_APPROACHING);
-      safety_approach_ = true;
+      status = helper_set_safety(neo_msgs2::msg::SafetyMode::SM_APPROACHING);
+      if (status) {
+        safety_approach_ = true;
+        set_approaching_ = false;
+      } else {
+        RCLCPP_ERROR(safety_client_node_->get_logger(), "Failed to set approaching mode");
+        return;
+      }
     }
 
     if (set_departing_) {
       // Stage 2: SM_DEPARTING
-      safety_approach_ = false;
-      set_departing_ = false;
-      helper_set_safety(neo_msgs2::msg::SafetyMode::SM_DEPARTING);
-      safety_depart_ = true;
+      status = helper_set_safety(neo_msgs2::msg::SafetyMode::SM_DEPARTING);
+      if (status) {
+        safety_approach_ = false;
+        set_departing_ = false;
+        safety_depart_ = true;
+      } else {
+        RCLCPP_ERROR(safety_client_node_->get_logger(), "Failed to set departing mode");
+        return;
+      }
     }
 
     if (set_none_) {
       // Stage 3: SM_NONE
-      safety_depart_ = false;
-      set_none_ = false;
-      helper_set_safety(neo_msgs2::msg::SafetyMode::SM_NONE);
-      safety_none_ = true;
+      status = helper_set_safety(neo_msgs2::msg::SafetyMode::SM_NONE);
+      if (status) {
+        safety_depart_ = false;
+        set_none_ = false;
+        safety_none_ = true;
+      } else {
+        RCLCPP_ERROR(safety_client_node_->get_logger(), "Failed to set none mode");
+        return;
+      }
     }
   }
 
-  void helper_set_safety(const uint8_t & mode)
+  bool helper_set_safety(const uint8_t & mode)
   {
     auto request = std::make_shared<neo_srvs2::srv::RelayBoardSetSafetyMode::Request>();
     request->set_safety_mode.mode = mode;
@@ -181,7 +197,7 @@ public:
       if (!rclcpp::ok()) {
         RCLCPP_ERROR(safety_client_node_->get_logger(),
         "set_safety_mode service not found. Exiting.");
-        return;
+        return false;
       }
       RCLCPP_INFO(safety_client_node_->get_logger(),
       "waiting for set_safety_mode service to be available");
@@ -195,8 +211,10 @@ public:
       rclcpp::FutureReturnCode::SUCCESS)
     {
       RCLCPP_INFO(safety_client_node_->get_logger(), "Safety mode set");
+      return true;
     } else {
       RCLCPP_ERROR(safety_client_node_->get_logger(), "Failed to to set the safety mode");
+      return false;
     }
   }
 
@@ -608,6 +626,7 @@ private:
   bool on_process_ = false;
 
   rclcpp::TimerBase::SharedPtr timer_;
+  rclcpp::TimerBase::SharedPtr timer_safety_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr vel_pub;
 
   rclcpp::CallbackGroup::SharedPtr sub_cb_grp_;
