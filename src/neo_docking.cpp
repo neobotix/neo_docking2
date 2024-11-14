@@ -63,11 +63,13 @@ public:
     this->declare_parameter<std::vector<double>>("orientation", {0, 0, 0.707, 0.707});
     this->declare_parameter<double>("laser_ref", 0.32);
     this->declare_parameter<double>("xy_goal_tolerance", 0.005);
+    this->declare_parameter<bool>("corner_scanners", true);
 
     this->get_parameter("pose", pose_array_);
     this->get_parameter("orientation", orientation_array_);
     this->get_parameter("laser_ref", laser_ref_);
     this->get_parameter("xy_goal_tolerance", goal_tol_);
+    this->get_parameter("corner_scanners", corner_scanners_);
 
     tf_static_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
 
@@ -211,7 +213,12 @@ private:
   void scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr sensor_data)
   {
     auto data = sensor_data;
-    store_laser_ref_ = data->ranges[static_cast<int>(data->ranges.size()) - 1];
+    if (corner_scanners_) {
+      store_laser_ref_ = data->ranges[static_cast<int>(data->ranges.size()) - 1];
+    } else {
+      store_laser_ref_ = data->ranges[static_cast<int>(data->ranges.size()) / 2]; 
+    }
+    
   }
 
   void result_callback(const WaypointFollowerGoalHandle::WrappedResult & result)
@@ -536,6 +543,7 @@ private:
   double laser_ref_ = 0.0;
   double store_laser_ref_ = 0.0;
   double goal_tol_ = 0.0;
+  bool corner_scanners_ = true;
 
   std::string robot_namespace;
 
