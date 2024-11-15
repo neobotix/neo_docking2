@@ -9,3 +9,6 @@
       - 0.0
       - 0.0
       - 0.00039814030247637615
+    laser_ref: 0.32
+    xy_goal_tolerance: 0.005
+    corner_scanners: True #depends on the laser scanner range set for the laserscanners provided in the robots' configs. 
