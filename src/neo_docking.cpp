@@ -57,6 +57,7 @@ public:
   using WaypointFollowerGoalHandle =
     rclcpp_action::ClientGoalHandle<nav2_msgs::action::FollowWaypoints>;
   rclcpp_action::Client<nav2_msgs::action::FollowWaypoints>::SendGoalOptions send_goal_options;
+  std::shared_ptr<rclcpp::Node> safety_client_node_;
 
   NeoDocking()
   : Node("neo_docking2")
@@ -64,7 +65,7 @@ public:
     this->declare_parameter<std::vector<double>>("pose", {-1, 0, 0});
     this->declare_parameter<std::vector<double>>("orientation", {0, 0, 0.707, 0.707});
     this->declare_parameter<double>("laser_ref", 0.32);
-    this->declare_parameter<bool>("use_nbx_safety", false);
+    this->declare_parameter<bool>("use_nbx_safety", true);
 
     this->get_parameter("pose", pose_array_);
     this->get_parameter("orientation", orientation_array_);
@@ -78,7 +79,7 @@ public:
 
     robot_namespace.erase(0, 1);
 
-    if (robot_namespace != "/") {
+    if (robot_namespace != "/" && robot_namespace != "") {
       RCLCPP_INFO(this->get_logger(), "automatically configuring namespace support");
       docking_station_ = robot_namespace + "/" + docking_station_;
       pre_dock_ = robot_namespace + "/" + pre_dock_;
@@ -92,6 +93,7 @@ public:
 
     // Seperate callback group for laserscan subscription
     sub_cb_grp_ = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+
     options.callback_group = sub_cb_grp_;
 
     // call to dock
@@ -110,12 +112,7 @@ public:
       set_safety_client_ = this->create_client<neo_srvs2::srv::RelayBoardSetSafetyMode>(
         "set_safety_mode"
       );
-      // Seperate thread for handling the safety
-      this->timer_safety_ = this->create_wall_timer(
-        std::chrono::milliseconds(100),
-        std::bind(&NeoDocking::helper_safety_thread, this));
-    }
-
+    
     buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
     transform_listener_ = std::make_shared<tf2_ros::TransformListener>(*buffer_);
 
@@ -139,6 +136,14 @@ public:
       std::chrono::milliseconds(100),
       std::bind(&NeoDocking::helper_thread, this));
 
+          // Seperate thread for handling the safety
+    sub_cb_grp_safety_ = safety_client_node_->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+
+    this->timer_safety_ = safety_client_node_->create_wall_timer(
+      std::chrono::milliseconds(100),
+      std::bind(&NeoDocking::helper_safety_thread, this), sub_cb_grp_safety_);
+    }
+
     send_goal_options =
       rclcpp_action::Client<nav2_msgs::action::FollowWaypoints>::SendGoalOptions();
   }
@@ -148,6 +153,7 @@ public:
     bool status;
     if (set_approaching_) {
       // Stage 1: SM_APPROACHING
+      RCLCPP_INFO(safety_client_node_->get_logger(), "Approaching");
       status = helper_set_safety(neo_msgs2::msg::SafetyMode::SM_APPROACHING);
       if (status) {
         safety_approach_ = true;
@@ -160,6 +166,7 @@ public:
 
     if (set_departing_) {
       // Stage 2: SM_DEPARTING
+      RCLCPP_INFO(safety_client_node_->get_logger(), "Departing");
       status = helper_set_safety(neo_msgs2::msg::SafetyMode::SM_DEPARTING);
       if (status) {
         safety_approach_ = false;
@@ -173,6 +180,7 @@ public:
 
     if (set_none_) {
       // Stage 3: SM_NONE
+      RCLCPP_INFO(safety_client_node_->get_logger(), "Setting to None");
       status = helper_set_safety(neo_msgs2::msg::SafetyMode::SM_NONE);
       if (status) {
         safety_depart_ = false;
@@ -206,16 +214,23 @@ public:
     // Send the request to set the safety
     auto result = set_safety_client_->async_send_request(request);
 
-    // Check if the request was accepted
-    if (rclcpp::spin_until_future_complete(safety_client_node_, result) ==
-      rclcpp::FutureReturnCode::SUCCESS)
-    {
-      RCLCPP_INFO(safety_client_node_->get_logger(), "Safety mode set");
-      return true;
+    if (result.wait_for(std::chrono::seconds(10)) == std::future_status::ready) {
+    
+    // The request is complete, process the result
+    auto response = result.get();
+    if (response->success) {
+        RCLCPP_INFO(safety_client_node_->get_logger(), "Safety setting request succeeded");
+        return true;
     } else {
-      RCLCPP_ERROR(safety_client_node_->get_logger(), "Failed to to set the safety mode");
-      return false;
+        RCLCPP_WARN(safety_client_node_->get_logger(), "Safety setting request failed");
+        return false;
     }
+    } else {
+        // The request did not complete within the timeout
+        RCLCPP_ERROR(safety_client_node_->get_logger(), "Timeout while waiting for safety setting request to complete");
+        return false;
+    }
+
   }
 
   void helper_thread()
@@ -621,7 +636,6 @@ private:
 
   // extra node for docking client - for spinning multiple threads
   std::shared_ptr<rclcpp::Node> client_node_;
-  std::shared_ptr<rclcpp::Node> safety_client_node_;
 
   bool on_process_ = false;
 
@@ -630,6 +644,7 @@ private:
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr vel_pub;
 
   rclcpp::CallbackGroup::SharedPtr sub_cb_grp_;
+  rclcpp::CallbackGroup::SharedPtr sub_cb_grp_safety_;
   rclcpp::SubscriptionOptions options;
   bool nav_task_finished_ = false;
   bool set_approaching_ = false;
@@ -659,6 +674,7 @@ int main(int argc, char ** argv)
   // multiple callback groups means multithreaded executor
   rclcpp::executors::MultiThreadedExecutor executor;
   executor.add_node(nh);
+  executor.add_node(nh->safety_client_node_);
   executor.spin();
 
   return 0;
