@@ -295,6 +295,7 @@ public:
         vel_pub->publish(twist_vel);
         on_process_ = false;
         nav_task_finished_ = false;
+        set_departing_ = true;
       }
     }
     rclcpp::spin_some(client_node_);
