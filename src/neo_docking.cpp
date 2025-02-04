@@ -244,6 +244,9 @@ public:
       if (use_nbx_safety_ && !safety_approach_) {
         return;
       }
+      std::cout<<"Detecting contour - wait for 3 seconds"<<std::endl;
+      rclcpp::sleep_for(3s);
+
       geometry_msgs::msg::TransformStamped robot_pose;
       geometry_msgs::msg::TransformStamped checkTransform;
       try {
@@ -262,10 +265,13 @@ public:
 
       // determine the distance of the robot from docking station
       double distance = euclidean_distance(robot_pose, checkTransform);
+      geometry_msgs::msg::Twist twist_vel;
 
       // additionaly layer check if docking has completed
       if (distance <= 0.015) {
         RCLCPP_INFO(client_node_->get_logger(), "Docking finished");
+        twist_vel.linear.x = 0.0;   // Setting 0 velocity
+        vel_pub->publish(twist_vel);
         on_process_ = false;
         nav_task_finished_ = false;
         set_departing_ = true;
@@ -273,7 +279,6 @@ public:
       }
 
       auto robot_docking_pose = checkTransform;
-      geometry_msgs::msg::Twist twist_vel;
 
       /** setting conditions for the robot to dock
        * distance between the robot and docking station will vary
@@ -315,7 +320,7 @@ private:
   void scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr sensor_data)
   {
     auto data = sensor_data;
-    store_laser_ref_ = data->ranges[static_cast<int>(data->ranges.size()) / 2];
+    store_laser_ref_ = data->ranges[static_cast<int>(data->ranges.size()) - 5];
   }
 
   void result_callback(const WaypointFollowerGoalHandle::WrappedResult & result)
@@ -369,7 +374,7 @@ private:
     t2.header.frame_id = docking_station_;
     t2.child_frame_id = pre_dock_2_;
 
-    t2.transform.translation.x = -0.30;
+    t2.transform.translation.x = -0.25;
     t2.transform.rotation.w = 1.0;
     tf_static_broadcaster_->sendTransform(t2);
   }
