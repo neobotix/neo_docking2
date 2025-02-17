@@ -45,6 +45,7 @@ SOFTWARE.
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "neo_srvs2/srv/relay_board_set_safety_mode.hpp"
 #include "neo_msgs2/msg/safety_mode.hpp"
+#include "neo_msgs2/msg/emergency_stop_state.hpp"
 
 using std::placeholders::_1;
 using std::placeholders::_2;
@@ -109,88 +110,44 @@ public:
     // client for handling nbx_safety
     if (use_nbx_safety_) {
       safety_client_node_ = std::make_shared<rclcpp::Node>("safety_client_node");
-      set_safety_client_ = this->create_client<neo_srvs2::srv::RelayBoardSetSafetyMode>(
+      set_safety_client_ = safety_client_node_->create_client
+        <neo_srvs2::srv::RelayBoardSetSafetyMode>(
         "set_safety_mode"
-      );
-    
-    buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
-    transform_listener_ = std::make_shared<tf2_ros::TransformListener>(*buffer_);
+        );
 
-    client_node_ = std::make_shared<rclcpp::Node>("docking_client_node");
+      buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+      transform_listener_ = std::make_shared<tf2_ros::TransformListener>(*buffer_);
 
-    sensor_sub = this->create_subscription<sensor_msgs::msg::LaserScan>(
-      "lidar_1/scan_filtered", 10, std::bind(&NeoDocking::scan_callback, this, _1),
-      options);
+      client_node_ = std::make_shared<rclcpp::Node>("docking_client_node");
 
-    vel_pub = this->create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 1);
+      sensor_sub = this->create_subscription<sensor_msgs::msg::LaserScan>(
+        "lidar_1/scan_filtered", 10, std::bind(&NeoDocking::scan_callback, this, _1),
+        options);
+      
+      emergency_state_sub_ = safety_client_node_->create_subscription<neo_msgs2::msg::EmergencyStopState>(
+        "emergency_stop_state", 10, std::bind(&NeoDocking::em_callback, this, _1));
 
-    waypoint_follower_action_client_ =
-      rclcpp_action::create_client<nav2_msgs::action::FollowWaypoints>(
-      client_node_,
-      "follow_waypoints");
+      vel_pub = this->create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 1);
 
-    waypoint_follower_goal_ = nav2_msgs::action::FollowWaypoints::Goal();
+      waypoint_follower_action_client_ =
+        rclcpp_action::create_client<nav2_msgs::action::FollowWaypoints>(
+        client_node_,
+        "follow_waypoints");
 
-    // Seperate thread for recieving the result_callback
-    this->timer_ = this->create_wall_timer(
-      std::chrono::milliseconds(100),
-      std::bind(&NeoDocking::helper_thread, this));
+      waypoint_follower_goal_ = nav2_msgs::action::FollowWaypoints::Goal();
 
-          // Seperate thread for handling the safety
-    sub_cb_grp_safety_ = safety_client_node_->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+      // Seperate thread for recieving the result_callback
+      this->timer_ = this->create_wall_timer(
+        std::chrono::milliseconds(100),
+        std::bind(&NeoDocking::helper_thread, this));
 
-    this->timer_safety_ = safety_client_node_->create_wall_timer(
-      std::chrono::milliseconds(100),
-      std::bind(&NeoDocking::helper_safety_thread, this), sub_cb_grp_safety_);
+      // Seperate thread for handling the safety
+      sub_cb_grp_safety_ = safety_client_node_->create_callback_group(
+        rclcpp::CallbackGroupType::Reentrant);
     }
 
     send_goal_options =
       rclcpp_action::Client<nav2_msgs::action::FollowWaypoints>::SendGoalOptions();
-  }
-
-  void helper_safety_thread()
-  {
-    bool status;
-    if (set_approaching_) {
-      // Stage 1: SM_APPROACHING
-      RCLCPP_INFO(safety_client_node_->get_logger(), "Approaching");
-      status = helper_set_safety(neo_msgs2::msg::SafetyMode::SM_APPROACHING);
-      if (status) {
-        safety_approach_ = true;
-        set_approaching_ = false;
-      } else {
-        RCLCPP_ERROR(safety_client_node_->get_logger(), "Failed to set approaching mode");
-        return;
-      }
-    }
-
-    if (set_departing_) {
-      // Stage 2: SM_DEPARTING
-      RCLCPP_INFO(safety_client_node_->get_logger(), "Departing");
-      status = helper_set_safety(neo_msgs2::msg::SafetyMode::SM_DEPARTING);
-      if (status) {
-        safety_approach_ = false;
-        set_departing_ = false;
-        safety_depart_ = true;
-      } else {
-        RCLCPP_ERROR(safety_client_node_->get_logger(), "Failed to set departing mode");
-        return;
-      }
-    }
-
-    if (set_none_) {
-      // Stage 3: SM_NONE
-      RCLCPP_INFO(safety_client_node_->get_logger(), "Setting to None");
-      status = helper_set_safety(neo_msgs2::msg::SafetyMode::SM_NONE);
-      if (status) {
-        safety_depart_ = false;
-        set_none_ = false;
-        safety_none_ = true;
-      } else {
-        RCLCPP_ERROR(safety_client_node_->get_logger(), "Failed to set none mode");
-        return;
-      }
-    }
   }
 
   bool helper_set_safety(const uint8_t & mode)
@@ -215,22 +172,113 @@ public:
     auto result = set_safety_client_->async_send_request(request);
 
     if (result.wait_for(std::chrono::seconds(10)) == std::future_status::ready) {
-    
-    // The request is complete, process the result
-    auto response = result.get();
-    if (response->success) {
+      // The request is complete, process the result
+      auto response = result.get();
+      if (response->success) {
         RCLCPP_INFO(safety_client_node_->get_logger(), "Safety setting request succeeded");
         return true;
-    } else {
+      } else {
         RCLCPP_WARN(safety_client_node_->get_logger(), "Safety setting request failed");
         return false;
-    }
+      }
     } else {
-        // The request did not complete within the timeout
-        RCLCPP_ERROR(safety_client_node_->get_logger(), "Timeout while waiting for safety setting request to complete");
-        return false;
+      // The request did not complete within the timeout
+      RCLCPP_ERROR(
+        safety_client_node_->get_logger(),
+        "Timeout while waiting for safety setting request to complete"
+      );
+      return false;
     }
+  }
 
+  void start_final_approach()
+  {
+    geometry_msgs::msg::TransformStamped robot_pose;
+    geometry_msgs::msg::TransformStamped checkTransform;
+    rclcpp::Rate loop_rate(100);
+    rclcpp::Time set_approach_time;
+
+    while (!goal_reached_) {
+      try {
+        robot_pose = buffer_->lookupTransform("map", base_link_, tf2::TimePointZero);
+      } catch (const std::exception & ex) {
+        std::cout << "no trasformation found between map and base_footprint" << std::endl;
+        goal_reached_ = true;
+      }
+
+      try {
+        checkTransform = buffer_->lookupTransform("map", docking_station_, tf2::TimePointZero);
+      } catch (const std::exception & ex) {
+        std::cout << "no trasformation found between map and docking_station" << std::endl;
+        goal_reached_ = true;
+      }
+
+      // determine the distance of the robot from docking station
+      double distance = euclidean_distance(robot_pose, checkTransform);
+      geometry_msgs::msg::Twist twist_vel;
+
+      // additionaly layer check if docking has completed
+      if (distance <= 0.005) {
+        RCLCPP_INFO(client_node_->get_logger(), "Check 1: Docking finished");
+        twist_vel.linear.x = 0.0;   // Setting 0 velocity
+        vel_pub->publish(twist_vel);
+        on_process_ = false;
+        nav_task_finished_ = false;
+        goal_reached_ = true;
+      }
+
+      auto robot_docking_pose = checkTransform;
+
+      if (distance >= 0.20 && !set_approaching_) {
+        RCLCPP_INFO_ONCE(client_node_->get_logger(), "Navigating in approach buffer");
+        try {
+          robot_pose = buffer_->lookupTransform("map", base_link_, tf2::TimePointZero);
+        } catch (const std::exception & ex) {
+          std::cout << "no trasformation found between map and base_footprint" << std::endl;
+          goal_reached_ = true;
+        }
+        twist_vel.linear.x = distance * 0.30;
+        vel_pub->publish(twist_vel);
+        if (scanner_stop_) {
+          twist_vel.linear.x = 0.0;
+          vel_pub->publish(twist_vel);
+          set_approaching_ = helper_set_safety(neo_msgs2::msg::SafetyMode::SM_APPROACHING);
+          set_approach_time = this->get_clock()->now();
+        }
+      }
+    
+      /** setting conditions for the robot to dock
+        * distance between the robot and docking station will vary
+        * depending on the localization. Therefore, using laser-
+        * reference to halt the robot **/
+      if (set_approaching_) {
+        set_none_ = false;
+        auto lapsed_time = (this->get_clock()->now() - set_approach_time).seconds();
+        if (lapsed_time > 2.0) {
+          if (distance > 0.005 && !scanner_stop_) {
+            try {
+              robot_pose = buffer_->lookupTransform("map", base_link_, tf2::TimePointZero);
+            } catch (const std::exception & ex) {
+              std::cout << "no trasformation found between map and base_footprint" << std::endl;
+              goal_reached_ = true;
+            }
+            // Todo: Set the P-Gain from the ROS parameter server
+            twist_vel.linear.x = distance * 0.5;
+            vel_pub->publish(twist_vel);
+          } else {
+            RCLCPP_INFO(client_node_->get_logger(), "Check 2: Docking finished");
+            twist_vel.linear.x = 0.0;   // Setting 0 velocity
+            vel_pub->publish(twist_vel);
+            on_process_ = false;
+            nav_task_finished_ = false;
+            goal_reached_ = true;
+          }
+        }
+      }
+      loop_rate.sleep();
+    }
+    set_approaching_ = false;
+    goal_reached_ = false;
   }
 
   void helper_thread()
@@ -239,69 +287,6 @@ public:
     if (!nav_task_finished_) {
       send_goal_options.result_callback =
         std::bind(&NeoDocking::result_callback, this, _1);
-    } else {
-      // Stage 3 of docking
-      if (use_nbx_safety_ && !safety_approach_) {
-        return;
-      }
-      std::cout<<"Detecting contour - wait for 3 seconds"<<std::endl;
-      rclcpp::sleep_for(3s);
-
-      geometry_msgs::msg::TransformStamped robot_pose;
-      geometry_msgs::msg::TransformStamped checkTransform;
-      try {
-        robot_pose = buffer_->lookupTransform("map", base_link_, tf2::TimePointZero);
-      } catch (const std::exception & ex) {
-        std::cout << "no trasformation found between map and base_footprint" << std::endl;
-        return;
-      }
-
-      try {
-        checkTransform = buffer_->lookupTransform("map", docking_station_, tf2::TimePointZero);
-      } catch (const std::exception & ex) {
-        std::cout << "no trasformation found between map and docking_station" << std::endl;
-        return;
-      }
-
-      // determine the distance of the robot from docking station
-      double distance = euclidean_distance(robot_pose, checkTransform);
-      geometry_msgs::msg::Twist twist_vel;
-
-      // additionaly layer check if docking has completed
-      if (distance <= 0.015) {
-        RCLCPP_INFO(client_node_->get_logger(), "Docking finished");
-        twist_vel.linear.x = 0.0;   // Setting 0 velocity
-        vel_pub->publish(twist_vel);
-        on_process_ = false;
-        nav_task_finished_ = false;
-        set_departing_ = true;
-        return;
-      }
-
-      auto robot_docking_pose = checkTransform;
-
-      /** setting conditions for the robot to dock
-       * distance between the robot and docking station will vary
-       * depending on the localization. Therefore, using laser-
-       * reference to halt the robot **/
-      if (distance > 0.015 && laser_ref_ < store_laser_ref_) {
-        try {
-          robot_pose = buffer_->lookupTransform("map", base_link_, tf2::TimePointZero);
-        } catch (const std::exception & ex) {
-          std::cout << "no trasformation found between map and base_footprint" << std::endl;
-          return;
-        }
-        // Todo: Set the P-Gain from the ROS parameter server
-        twist_vel.linear.x = distance * 0.50;
-        vel_pub->publish(twist_vel);
-      } else {
-        RCLCPP_INFO(client_node_->get_logger(), "Docking finished");
-        twist_vel.linear.x = 0.0;   // Setting 0 velocity
-        vel_pub->publish(twist_vel);
-        on_process_ = false;
-        nav_task_finished_ = false;
-        set_departing_ = true;
-      }
     }
     rclcpp::spin_some(client_node_);
   }
@@ -323,14 +308,18 @@ private:
     store_laser_ref_ = data->ranges[static_cast<int>(data->ranges.size()) - 5];
   }
 
+  void em_callback(const neo_msgs2::msg::EmergencyStopState::SharedPtr em_data)
+  {
+    auto data = em_data;
+    scanner_stop_ = data->scanner_stop;
+  }
+
   void result_callback(const WaypointFollowerGoalHandle::WrappedResult & result)
   {
     if (result.code == rclcpp_action::ResultCode::SUCCEEDED) {
       dock_poses_.clear();
-      if (use_nbx_safety_) {
-        set_approaching_ = true;
-      }
       nav_task_finished_ = true;
+      start_final_approach();
     }
   }
 
@@ -374,7 +363,7 @@ private:
     t2.header.frame_id = docking_station_;
     t2.child_frame_id = pre_dock_2_;
 
-    t2.transform.translation.x = -0.25;
+    t2.transform.translation.x = -0.30;
     t2.transform.rotation.w = 1.0;
     tf_static_broadcaster_->sendTransform(t2);
   }
@@ -493,6 +482,7 @@ private:
       return false;
     }
 
+    set_none_ = false;
     startWaypointFollowing(dock_poses_);
 
     return true;
@@ -507,12 +497,8 @@ private:
       return false;
     }
 
-    if (use_nbx_safety_ && !safety_depart_) {
-      RCLCPP_ERROR(this->get_logger(), "Safety mode is not switched to departing");
-      return false;
-    }
-
     RCLCPP_INFO(this->get_logger(), "Starting to undock");
+    rclcpp::Rate loop_rate(100);
 
     on_process_ = true;
 
@@ -546,18 +532,26 @@ private:
 
     auto robot_docked_pose = robot_pose;
     geometry_msgs::msg::Twist twist_vel;
+    rclcpp::Rate sleep_rate(0.5);
 
     while (distance < 0.5) {
-      try {
-        robot_pose = buffer_->lookupTransform("map", base_link_, tf2::TimePointZero);
-      } catch (const std::exception & ex) {
-        std::cout << "no trasformation found between map and base_footprint" << std::endl;
-        return false;
+      if (!set_departing_) {
+        set_departing_ = helper_set_safety(neo_msgs2::msg::SafetyMode::SM_DEPARTING);
+        sleep_rate.sleep();
       }
-      distance = euclidean_distance(robot_docked_pose, robot_pose);
-      twist_vel.linear.x = -0.1;
+      if (set_departing_) {
+        try {
+          robot_pose = buffer_->lookupTransform("map", base_link_, tf2::TimePointZero);
+        } catch (const std::exception & ex) {
+          std::cout << "no trasformation found between map and base_footprint" << std::endl;
+          return false;
+        }
+        distance = euclidean_distance(robot_docked_pose, robot_pose);
+        twist_vel.linear.x = -0.1;
 
-      vel_pub->publish(twist_vel);
+        vel_pub->publish(twist_vel);
+      }
+      loop_rate.sleep();
     }
 
     // Setting 0 velocity
@@ -567,7 +561,14 @@ private:
     // Process finished
     on_process_ = false;
     RCLCPP_INFO(client_node_->get_logger(), "Undocking finished");
-    set_none_ = true;
+    set_departing_ = false;
+
+    if (!set_none_) {
+      set_none_ = helper_set_safety(neo_msgs2::msg::SafetyMode::SM_NONE);
+    }
+
+    sleep_rate.sleep();
+    RCLCPP_INFO(client_node_->get_logger(), "Setting to Mode Normal");
 
     return true;
   }
@@ -634,6 +635,8 @@ private:
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr undocking_srv_;
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr store_pose_srv_;
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr sensor_sub;
+  rclcpp::Subscription<neo_msgs2::msg::EmergencyStopState>::SharedPtr emergency_state_sub_;
+
   rclcpp::Client<neo_srvs2::srv::RelayBoardSetSafetyMode>::SharedPtr set_safety_client_;
 
   std::unique_ptr<tf2_ros::Buffer> buffer_;
@@ -644,9 +647,9 @@ private:
   std::shared_ptr<rclcpp::Node> client_node_;
 
   bool on_process_ = false;
+  bool scanner_stop_ = false;
 
   rclcpp::TimerBase::SharedPtr timer_;
-  rclcpp::TimerBase::SharedPtr timer_safety_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr vel_pub;
 
   rclcpp::CallbackGroup::SharedPtr sub_cb_grp_;
@@ -656,9 +659,7 @@ private:
   bool set_approaching_ = false;
   bool set_departing_ = false;
   bool set_none_ = false;
-  bool safety_approach_ = false;
-  bool safety_depart_ = false;
-  bool safety_none_ = false;
+  bool goal_reached_ = false;
 
   double laser_ref_ = 0.0;
   double store_laser_ref_ = 0.0;
