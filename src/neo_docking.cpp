@@ -123,7 +123,7 @@ public:
       sensor_sub = this->create_subscription<sensor_msgs::msg::LaserScan>(
         "lidar_1/scan_filtered", 10, std::bind(&NeoDocking::scan_callback, this, _1),
         options);
-      
+
       emergency_state_sub_ = safety_client_node_->create_subscription<neo_msgs2::msg::EmergencyStopState>(
         "emergency_stop_state", 10, std::bind(&NeoDocking::em_callback, this, _1));
 
@@ -218,7 +218,7 @@ public:
       geometry_msgs::msg::Twist twist_vel;
 
       // additionaly layer check if docking has completed
-      if (distance <= 0.005) {
+      if (distance <= 0.003) {
         RCLCPP_INFO(client_node_->get_logger(), "Check 1: Docking finished");
         twist_vel.linear.x = 0.0;   // Setting 0 velocity
         vel_pub->publish(twist_vel);
@@ -237,16 +237,14 @@ public:
           std::cout << "no trasformation found between map and base_footprint" << std::endl;
           goal_reached_ = true;
         }
-        twist_vel.linear.x = distance * 0.30;
+        twist_vel.linear.x = distance * 0.3;
         vel_pub->publish(twist_vel);
         if (scanner_stop_) {
-          twist_vel.linear.x = 0.0;
-          vel_pub->publish(twist_vel);
           set_approaching_ = helper_set_safety(neo_msgs2::msg::SafetyMode::SM_APPROACHING);
           set_approach_time = this->get_clock()->now();
         }
       }
-    
+
       /** setting conditions for the robot to dock
         * distance between the robot and docking station will vary
         * depending on the localization. Therefore, using laser-
@@ -254,8 +252,8 @@ public:
       if (set_approaching_) {
         set_none_ = false;
         auto lapsed_time = (this->get_clock()->now() - set_approach_time).seconds();
-        if (lapsed_time > 2.0) {
-          if (distance > 0.005 && !scanner_stop_) {
+        if (lapsed_time > 3.0) {
+          if (distance > 0.003 && laser_ref_ < store_laser_ref_ && lapsed_time < 22.0) {
             try {
               robot_pose = buffer_->lookupTransform("map", base_link_, tf2::TimePointZero);
             } catch (const std::exception & ex) {
@@ -263,7 +261,7 @@ public:
               goal_reached_ = true;
             }
             // Todo: Set the P-Gain from the ROS parameter server
-            twist_vel.linear.x = distance * 0.5;
+            twist_vel.linear.x = distance * 0.35;
             vel_pub->publish(twist_vel);
           } else {
             RCLCPP_INFO(client_node_->get_logger(), "Check 2: Docking finished");
@@ -272,6 +270,9 @@ public:
             on_process_ = false;
             nav_task_finished_ = false;
             goal_reached_ = true;
+            RCLCPP_INFO(client_node_->get_logger(),
+              "Check 2: Docking finished - the distance from the charging station is: %f",
+              distance);
           }
         }
       }
@@ -363,7 +364,7 @@ private:
     t2.header.frame_id = docking_station_;
     t2.child_frame_id = pre_dock_2_;
 
-    t2.transform.translation.x = -0.30;
+    t2.transform.translation.x = -0.35;
     t2.transform.rotation.w = 1.0;
     tf_static_broadcaster_->sendTransform(t2);
   }
