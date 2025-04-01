@@ -23,6 +23,8 @@ find_package(tf2_eigen REQUIRED)
 find_package(tf2_eigen REQUIRED)
 find_package(laser_geometry REQUIRED)
 find_package(neo_srvs2 REQUIRED)
+find_package(yaml_cpp_vendor REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
 # uncomment the following section in order to fill in
 # further dependencies manually.
@@ -42,9 +44,12 @@ ament_target_dependencies(neo_docking2
   pcl_ros
   tf2_geometry_msgs
   tf2_eigen
+  yaml_cpp_vendor
   laser_geometry
   neo_srvs2
   )
+
+target_link_libraries(neo_docking2 yaml-cpp::yaml-cpp)
 
 target_include_directories(neo_docking2 PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

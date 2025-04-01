@@ -264,12 +264,19 @@ private:
       RCLCPP_INFO(this->get_logger(), "pre dock succeded");
       pre_dock_succeeded_ = true;
       geometry_msgs::msg::Pose init_guess;
+      contour_matching->startMatching();
 
       RCLCPP_INFO(
         this->get_logger(),
         "resetting initial guess");
 
-      init_guess.position.x = 1.0 - offset_x_;
+      init_guess.position.x = 0.0;
+      init_guess.position.y = -offset_y_;
+      // init_guess.orientation.x = -offset_y_;
+      // init_guess.orientation.y = -offset_y_;
+      // init_guess.orientation.z = -offset_y_;
+      // init_guess.orientation.w = -offset_y_;
+
       rclcpp::Rate rate(2);
 
       // Matching the contour once again
@@ -470,6 +477,8 @@ private:
     RCLCPP_INFO(this->get_logger(), "Starting to dock");
 
     on_process_ = true;
+    
+    contour_matching->stopMatching();
 
     if (timer_inverse_check_) {
       timer_inverse_check_->cancel();
