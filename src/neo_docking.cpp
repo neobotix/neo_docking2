@@ -73,7 +73,7 @@ public:
   {
     this->declare_parameter<std::vector<double>>("pose", {-1, 0, 0});
     this->declare_parameter<std::vector<double>>("orientation", {0, 0, 0.707, 0.707});
-    this->declare_parameter<double>("laser_ref", 0.32);
+    this->declare_parameter<double>("laser_ref", 0.17);
     this->declare_parameter<bool>("auto_detect", true);
     this->declare_parameter<double>("offset_x", 0.70);
     this->declare_parameter<double>("offset_y", -0.37);
@@ -247,7 +247,7 @@ public:
       }
 
       try {
-        checkTransform = buffer_->lookupTransform("map", docking_station_, tf2::TimePointZero);
+        checkTransform = buffer_->lookupTransform("map", "docking_link", tf2::TimePointZero);
       } catch (const std::exception & ex) {
         std::cout << "no trasformation found between map and docking_station" << std::endl;
         goal_reached_ = true;
@@ -282,6 +282,7 @@ public:
           vel_pub->publish(twist_vel);  
         }
         if (scanner_stop_) {
+ 	  std::cout<<"distance"<<distance<<std::endl;
           set_approaching_ = helper_set_safety(neo_msgs2::msg::SafetyMode::SM_APPROACHING);
           set_approach_time = this->get_clock()->now();
         }
@@ -295,7 +296,7 @@ public:
         set_none_ = false;
         auto lapsed_time = (this->get_clock()->now() - set_approach_time).seconds();
         if (lapsed_time > 3.0) {
-          if (distance > 0.003 && laser_ref_ < store_laser_ref_ && lapsed_time < 22.0) {
+          if (distance > 0.01 && lapsed_time < 22.0) {
             try {
               robot_pose = buffer_->lookupTransform("map", base_link_, tf2::TimePointZero);
             } catch (const std::exception & ex) {
