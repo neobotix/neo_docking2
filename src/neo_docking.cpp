@@ -258,12 +258,13 @@ public:
       geometry_msgs::msg::Twist twist_vel;
 
       // additionaly layer check if docking has completed
-      if (distance <= 0.003) {
+      if (distance <= 0.01) {
         RCLCPP_INFO(client_node_->get_logger(), "Check 1: Docking finished");
         twist_vel.linear.x = 0.0;   // Setting 0 velocity
         vel_pub->publish(twist_vel);
         on_process_ = false;
         nav_task_finished_ = false;
+        std::cout<<"distance"<<distance<<std::endl;
         goal_reached_ = true;
       }
 
@@ -282,7 +283,7 @@ public:
           vel_pub->publish(twist_vel);  
         }
         if (scanner_stop_) {
- 	  std::cout<<"distance"<<distance<<std::endl;
+          std::cout<<"distance"<<distance<<std::endl;
           set_approaching_ = helper_set_safety(neo_msgs2::msg::SafetyMode::SM_APPROACHING);
           set_approach_time = this->get_clock()->now();
         }
@@ -292,11 +293,12 @@ public:
         * distance between the robot and docking station will vary
         * depending on the localization. Therefore, using laser-
         * reference to halt the robot **/
+
       if (set_approaching_ && !goal_reached_) {
         set_none_ = false;
         auto lapsed_time = (this->get_clock()->now() - set_approach_time).seconds();
         if (lapsed_time > 3.0) {
-          if (distance > 0.01 && lapsed_time < 22.0) {
+          if (distance > 0.01 && lapsed_time < 12.0) {
             try {
               robot_pose = buffer_->lookupTransform("map", base_link_, tf2::TimePointZero);
             } catch (const std::exception & ex) {
