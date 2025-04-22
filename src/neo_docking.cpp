@@ -658,12 +658,6 @@ private:
       return false;
     }
 
-    if (euclidean_distance(robot_pose, checkTransform) > 0.07) {
-      RCLCPP_ERROR(this->get_logger(), "Not in the docking position");
-      on_process_ = false;
-      return false;
-    }
-
     auto robot_docked_pose = robot_pose;
     geometry_msgs::msg::Twist twist_vel;
     rclcpp::Rate sleep_rate(0.5);
