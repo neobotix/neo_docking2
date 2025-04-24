@@ -96,9 +96,7 @@ public:
     this->get_parameter("pre_dock_dist", pre_dock_dist_);
 
     if (auto_detect_) {
-      target_cloud = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>);
       tf_static_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
-      pcl::io::loadPCDFile<pcl::PointXYZ> (pcd_source_, *target_cloud);
     }
 
     // Seperate callback group for laserscan subscription
@@ -132,7 +130,6 @@ public:
     if (auto_detect_) {
       contour_matching = std::make_shared<ContourMatching>(this->create_sub_node("perception"),
         scan_topic_,
-        *target_cloud,
         offset_x_,
         offset_y_,
         offset_yaw_);
@@ -783,7 +780,6 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr sensor_sub;
   rclcpp::Subscription<neo_msgs2::msg::EmergencyStopState>::SharedPtr emergency_state_sub_;
 
-  pcl::PointCloud<pcl::PointXYZ>::Ptr target_cloud;
   rclcpp::Client<neo_srvs2::srv::RelayBoardSetSafetyMode>::SharedPtr set_safety_client_;
 
   std::unique_ptr<tf2_ros::Buffer> buffer_;
