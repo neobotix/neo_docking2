@@ -21,9 +21,6 @@ neo_docking2:
     # Scan topic that needs to considered for the contour matching
     scan_topic: "/lidar_1/scan_filtered"
 
-    # Point cloud source
-    pcd_source: "cloud_test.pcd"
-
     # Undocking distance - for now only in x-direction
     undock_dist: 0.5
 
