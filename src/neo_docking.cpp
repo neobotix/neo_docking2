@@ -244,7 +244,7 @@ public:
       }
 
       try {
-        checkTransform = buffer_->lookupTransform("map", "docking_link", tf2::TimePointZero);
+        checkTransform = buffer_->lookupTransform("map", docking_station_, tf2::TimePointZero);
       } catch (const std::exception & ex) {
         std::cout << "no trasformation found between map and docking_station" << std::endl;
         goal_reached_ = true;
@@ -261,7 +261,7 @@ public:
         vel_pub->publish(twist_vel);
         on_process_ = false;
         nav_task_finished_ = false;
-        std::cout<<"distance"<<distance<<std::endl;
+        std::cout<<"distance:"<<distance<<std::endl;
         goal_reached_ = true;
       }
 
@@ -424,7 +424,7 @@ private:
     t.header.stamp = this->get_clock()->now();
     if (!auto_detect_) {
       t.header.frame_id = "map";
-      t.child_frame_id = "docking_link";
+      t.child_frame_id = docking_station_;
 
       t.transform.translation.x = pose_array_[0];
       t.transform.translation.y = pose_array_[1];
@@ -441,7 +441,7 @@ private:
     geometry_msgs::msg::TransformStamped t1;
 
     t1.header.stamp = this->get_clock()->now();
-    t1.header.frame_id = "docking_link";
+    t1.header.frame_id = docking_station_;
     t1.child_frame_id = "pre_dock";
 
     t1.transform.translation.x = (-1.8 + offset_x_);
@@ -453,7 +453,7 @@ private:
     geometry_msgs::msg::TransformStamped t2;
 
     t2.header.stamp = this->get_clock()->now();
-    t2.header.frame_id = "docking_link";
+    t2.header.frame_id = docking_station_;
     t2.child_frame_id = "pre_dock2";
 
     t2.transform.translation.x = -pre_dock_dist_ ;
@@ -555,7 +555,7 @@ private:
 
     // stage 3
     try {
-      tempTransform = buffer_->lookupTransform("map", "docking_link", tf2::TimePointZero);
+      tempTransform = buffer_->lookupTransform("map", docking_station_, tf2::TimePointZero);
     } catch (const std::exception & ex) {
       std::cout << "no trasformation found between map and docking_link" << std::endl;
       dock_poses_.clear();
@@ -647,13 +647,6 @@ private:
       robot_pose = buffer_->lookupTransform("map", base_link_, tf2::TimePointZero);
     } catch (const std::exception & ex) {
       std::cout << "no trasformation found between map and base_footprint" << std::endl;
-      return false;
-    }
-
-    try {
-      checkTransform = buffer_->lookupTransform("map", docking_station_, tf2::TimePointZero);
-    } catch (const std::exception & ex) {
-      std::cout << "no trasformation found between map and pre_dock" << std::endl;
       return false;
     }
 
