@@ -33,7 +33,6 @@ SOFTWARE.
 #include <cstdio>
 #include <cmath>
 
-#include "yaml-cpp/yaml.h"
 #include "tf2_ros/static_transform_broadcaster.h"
 
 #include "rclcpp/rclcpp.hpp"
@@ -109,9 +108,6 @@ public:
     // call to undock
     undocking_srv_ = this->create_service<std_srvs::srv::Empty>(
       "undock_and_arm", std::bind(&NeoDocking::undock, this, _1, _2));
-    // call to store poses
-    store_pose_srv_ = this->create_service<std_srvs::srv::Empty>(
-      "store_pose", std::bind(&NeoDocking::store_pose, this, _1, _2));
 
     // client for handling nbx_safety
     if (use_nbx_safety_) {
@@ -180,7 +176,6 @@ public:
   {
     auto request = std::make_shared<neo_srvs2::srv::RelayBoardSetSafetyMode::Request>();
     request->set_safety_mode.mode = mode;
-    // ToDo: Set stations from YAML
     request->station = 0;
 
     // Check service is available
@@ -703,56 +698,6 @@ private:
     return true;
   }
 
-  bool store_pose(
-    std::shared_ptr<std_srvs::srv::Empty::Request>/*req*/,
-    std::shared_ptr<std_srvs::srv::Empty::Response>/*res*/)
-  {
-    if (on_process_) {
-      RCLCPP_ERROR(this->get_logger(), "Already process started, cannot update the pose");
-      return false;
-    }
-
-    geometry_msgs::msg::TransformStamped tempTransform;
-
-    try {
-      tempTransform = buffer_->lookupTransform("map", "base_footprint", tf2::TimePointZero);
-    } catch (const std::exception & ex) {
-      std::cout << "no trasformation found between map and base_footprint" << std::endl;
-      return false;
-    }
-
-    auto robot_pose = ConvertTransformToPose(tempTransform);
-
-    YAML::Emitter out;
-    out << YAML::BeginMap;
-    out << YAML::Key << "neo_docking2";
-    out << YAML::BeginMap;
-
-    // Save WPs to data structure
-    out << YAML::Key << "ros__parameters";
-    out << YAML::BeginMap;
-    out << YAML::Key << "pose";
-    std::vector<double> pose =
-    {robot_pose.pose.position.x, robot_pose.pose.position.y,
-      robot_pose.pose.position.z};
-    out << YAML::Value << pose;
-    out << YAML::Key << "orientation";
-    std::vector<double> orientation =
-    {robot_pose.pose.orientation.w, robot_pose.pose.orientation.x,
-      robot_pose.pose.orientation.y, robot_pose.pose.orientation.z};
-    out << YAML::Value << orientation;
-    out << YAML::Key << "laser_ref";
-    out << YAML::Value << store_laser_ref_;
-    out << YAML::EndMap;
-
-    std::ofstream fout("src/neo_docking2/launch/dock_pose.yaml");
-    fout << out.c_str();
-
-    RCLCPP_INFO(client_node_->get_logger(), "Poses stored");
-
-    return true;
-  }
-
   std::shared_ptr<tf2_ros::StaticTransformBroadcaster> tf_static_broadcaster_;
   std::vector<double> pose_array_;
   std::vector<double> orientation_array_;
@@ -769,7 +714,6 @@ private:
 
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr docking_srv_;
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr undocking_srv_;
-  rclcpp::Service<std_srvs::srv::Empty>::SharedPtr store_pose_srv_;
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr sensor_sub;
   rclcpp::Subscription<neo_msgs2::msg::EmergencyStopState>::SharedPtr emergency_state_sub_;
 
