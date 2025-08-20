@@ -16,7 +16,6 @@ find_package(tf2_ros REQUIRED)
 find_package(nav2_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(yaml_cpp_vendor REQUIRED)
-find_package(yaml-cpp REQUIRED)
 find_package(neo_msgs2 REQUIRED)
 find_package(neo_srvs2 REQUIRED)
 
@@ -37,8 +36,6 @@ ament_target_dependencies(neo_docking2
   neo_msgs2
   neo_srvs2
   )
-
-target_link_libraries(neo_docking2 yaml-cpp::yaml-cpp)
 
 target_include_directories(neo_docking2 PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
