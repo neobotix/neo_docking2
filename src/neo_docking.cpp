@@ -256,13 +256,12 @@ public:
         vel_pub->publish(twist_vel);
         on_process_ = false;
         nav_task_finished_ = false;
-        std::cout<<"distance:"<<distance<<std::endl;
         goal_reached_ = true;
       }
 
       auto robot_docking_pose = checkTransform;
 
-      if (distance >= 0.20 && !set_approaching_) {
+      if (distance >= 0.10 && !set_approaching_) {
         RCLCPP_INFO_ONCE(client_node_->get_logger(), "Navigating in approach buffer");
         try {
           robot_pose = buffer_->lookupTransform("map", base_link_, tf2::TimePointZero);
