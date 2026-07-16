@@ -261,22 +261,24 @@ public:
 
       auto robot_docking_pose = checkTransform;
 
-      if (distance >= 0.10 && !set_approaching_) {
-        RCLCPP_INFO_ONCE(client_node_->get_logger(), "Navigating in approach buffer");
-        try {
-          robot_pose = buffer_->lookupTransform("map", base_link_, tf2::TimePointZero);
-        } catch (const std::exception & ex) {
-          std::cout << "no trasformation found between map and base_footprint" << std::endl;
-          goal_reached_ = true;
-        }
-        twist_vel.linear.x = distance * 0.3;
-        if (!goal_reached_) {
-          vel_pub->publish(twist_vel);  
-        }
-        if (scanner_stop_) {
-          std::cout<<"distance"<<distance<<std::endl;
-          set_approaching_ = helper_set_safety(neo_msgs2::msg::SafetyMode::SM_APPROACHING);
-          set_approach_time = this->get_clock()->now();
+      // These distances need to be configurable by the user so they can set the approach mode.
+      constexpr double approach_distance = 0.3;
+      constexpr double distance_tolerance = 0.005;
+
+      if (!set_approaching_ && !goal_reached_) {
+        if (distance > approach_distance + distance_tolerance) {
+          RCLCPP_INFO_ONCE(client_node_->get_logger(), "Navigating in approach buffer");
+          twist_vel.linear.x = 0.12;
+          vel_pub->publish(twist_vel);
+        } else {
+          twist_vel.linear.x = 0.0;
+          vel_pub->publish(twist_vel);
+
+          set_approaching_ = helper_set_safety(
+            neo_msgs2::msg::SafetyMode::SM_APPROACHING);
+          if (set_approaching_) {
+            set_approach_time = this->get_clock()->now();
+          }
         }
       }
 
