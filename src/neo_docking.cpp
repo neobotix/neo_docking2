@@ -262,13 +262,13 @@ public:
       auto robot_docking_pose = checkTransform;
 
       // These distances need to be configurable by the user so they can set the approach mode.
-      constexpr double approach_distance = 0.3;
+      constexpr double approach_distance = 0.37;
       constexpr double distance_tolerance = 0.005;
 
       if (!set_approaching_ && !goal_reached_) {
         if (distance > approach_distance + distance_tolerance) {
           RCLCPP_INFO_ONCE(client_node_->get_logger(), "Navigating in approach buffer");
-          twist_vel.linear.x = 0.12;
+          twist_vel.linear.x = 0.05;
           vel_pub->publish(twist_vel);
         } else {
           twist_vel.linear.x = 0.0;
@@ -378,7 +378,7 @@ private:
       // init_guess.orientation.z = -offset_y_;
       // init_guess.orientation.w = -offset_y_;
 
-      rclcpp::Rate rate(2);
+      rclcpp::Rate rate(0.5);
 
       // Matching the contour once again
       contour_matching->setInitialGuess(init_guess);
