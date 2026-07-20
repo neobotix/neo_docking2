@@ -299,8 +299,13 @@ public:
               goal_reached_ = true;
             }
             // Todo: Set the P-Gain from the ROS parameter server
-            twist_vel.linear.x = distance * 0.35;
-            vel_pub->publish(twist_vel);
+            if (distance > 0.15) {
+              twist_vel.linear.x = 0.05;
+              vel_pub->publish(twist_vel);
+            } else {
+              twist_vel.linear.x = distance * 0.53;
+              vel_pub->publish(twist_vel);
+            }
           } else {
             RCLCPP_INFO(client_node_->get_logger(), "Check 2: Docking finished");
             twist_vel.linear.x = 0.0;   // Setting 0 velocity
