@@ -28,10 +28,11 @@ SOFTWARE.
 #include <tf2_ros/create_timer_ros.h>
 #include <tf2_ros/transform_listener.h>
 
-#include <fstream>
+#include <algorithm>
 #include <chrono>
-#include <cstdio>
 #include <cmath>
+#include <cstdio>
+#include <fstream>
 
 #include "tf2_ros/static_transform_broadcaster.h"
 
@@ -229,6 +230,25 @@ public:
     geometry_msgs::msg::TransformStamped checkTransform;
     rclcpp::Rate loop_rate(100);
     rclcpp::Time set_approach_time;
+    rclcpp::Time last_velocity_update = this->get_clock()->now();
+    double commanded_linear_velocity = 0.0;
+
+    constexpr double max_acceleration = 0.10;  // m/s^2
+    constexpr double max_deceleration = 0.15;  // m/s^2
+    auto smooth_velocity = [&](const double target_velocity) {
+        const auto now = this->get_clock()->now();
+        const double dt = std::clamp(
+          (now - last_velocity_update).seconds(), 0.0, 0.1);
+        last_velocity_update = now;
+
+        const double rate_limit = target_velocity > commanded_linear_velocity ?
+          max_acceleration : max_deceleration;
+        const double max_velocity_change = rate_limit * dt;
+        commanded_linear_velocity += std::clamp(
+          target_velocity - commanded_linear_velocity,
+          -max_velocity_change, max_velocity_change);
+        return commanded_linear_velocity;
+      };
 
     while (!goal_reached_) {
       try {
@@ -253,6 +273,7 @@ public:
       if (distance <= 0.01) {
         RCLCPP_INFO(client_node_->get_logger(), "Check 1: Docking finished");
         twist_vel.linear.x = 0.0;   // Setting 0 velocity
+        commanded_linear_velocity = 0.0;
         vel_pub->publish(twist_vel);
         on_process_ = false;
         nav_task_finished_ = false;
@@ -268,16 +289,22 @@ public:
       if (!set_approaching_ && !goal_reached_) {
         if (distance > approach_distance + distance_tolerance) {
           RCLCPP_INFO_ONCE(client_node_->get_logger(), "Navigating in approach buffer");
-          twist_vel.linear.x = 0.05;
+          twist_vel.linear.x = smooth_velocity(0.05);
           vel_pub->publish(twist_vel);
         } else {
-          twist_vel.linear.x = 0.0;
+          twist_vel.linear.x = smooth_velocity(0.0);
           vel_pub->publish(twist_vel);
 
-          set_approaching_ = helper_set_safety(
-            neo_msgs2::msg::SafetyMode::SM_APPROACHING);
-          if (set_approaching_) {
-            set_approach_time = this->get_clock()->now();
+          if (std::abs(commanded_linear_velocity) < 1e-3) {
+            commanded_linear_velocity = 0.0;
+            twist_vel.linear.x = 0.0;
+            vel_pub->publish(twist_vel);
+            set_approaching_ = helper_set_safety(
+              neo_msgs2::msg::SafetyMode::SM_APPROACHING);
+            if (set_approaching_) {
+              set_approach_time = this->get_clock()->now();
+              last_velocity_update = set_approach_time;
+            }
           }
         }
       }
@@ -298,17 +325,20 @@ public:
               std::cout << "no trasformation found between map and base_footprint" << std::endl;
               goal_reached_ = true;
             }
-            // Todo: Set the P-Gain from the ROS parameter server
-            if (distance > 0.15) {
-              twist_vel.linear.x = 0.05;
-              vel_pub->publish(twist_vel);
-            } else {
-              twist_vel.linear.x = distance * 0.53;
-              vel_pub->publish(twist_vel);
-            }
+            constexpr double docking_speed = 0.05;
+            constexpr double slowdown_distance = 0.045;
+            constexpr double stop_distance = 0.01;
+            const double normalized_distance = std::clamp(
+              (distance - stop_distance) / (slowdown_distance - stop_distance),
+              0.0, 1.0);
+            const double smoothstep = normalized_distance * normalized_distance *
+              (3.0 - 2.0 * normalized_distance);
+            twist_vel.linear.x = smooth_velocity(docking_speed * smoothstep);
+            vel_pub->publish(twist_vel);
           } else {
             RCLCPP_INFO(client_node_->get_logger(), "Check 2: Docking finished");
             twist_vel.linear.x = 0.0;   // Setting 0 velocity
+            commanded_linear_velocity = 0.0;
             vel_pub->publish(twist_vel);
             on_process_ = false;
             nav_task_finished_ = false;
