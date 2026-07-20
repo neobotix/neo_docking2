@@ -261,22 +261,24 @@ public:
 
       auto robot_docking_pose = checkTransform;
 
-      if (distance >= 0.10 && !set_approaching_) {
-        RCLCPP_INFO_ONCE(client_node_->get_logger(), "Navigating in approach buffer");
-        try {
-          robot_pose = buffer_->lookupTransform("map", base_link_, tf2::TimePointZero);
-        } catch (const std::exception & ex) {
-          std::cout << "no trasformation found between map and base_footprint" << std::endl;
-          goal_reached_ = true;
-        }
-        twist_vel.linear.x = distance * 0.3;
-        if (!goal_reached_) {
-          vel_pub->publish(twist_vel);  
-        }
-        if (scanner_stop_) {
-          std::cout<<"distance"<<distance<<std::endl;
-          set_approaching_ = helper_set_safety(neo_msgs2::msg::SafetyMode::SM_APPROACHING);
-          set_approach_time = this->get_clock()->now();
+      // These distances need to be configurable by the user so they can set the approach mode.
+      constexpr double approach_distance = 0.37;
+      constexpr double distance_tolerance = 0.005;
+
+      if (!set_approaching_ && !goal_reached_) {
+        if (distance > approach_distance + distance_tolerance) {
+          RCLCPP_INFO_ONCE(client_node_->get_logger(), "Navigating in approach buffer");
+          twist_vel.linear.x = 0.05;
+          vel_pub->publish(twist_vel);
+        } else {
+          twist_vel.linear.x = 0.0;
+          vel_pub->publish(twist_vel);
+
+          set_approaching_ = helper_set_safety(
+            neo_msgs2::msg::SafetyMode::SM_APPROACHING);
+          if (set_approaching_) {
+            set_approach_time = this->get_clock()->now();
+          }
         }
       }
 
@@ -297,8 +299,13 @@ public:
               goal_reached_ = true;
             }
             // Todo: Set the P-Gain from the ROS parameter server
-            twist_vel.linear.x = distance * 0.35;
-            vel_pub->publish(twist_vel);
+            if (distance > 0.15) {
+              twist_vel.linear.x = 0.05;
+              vel_pub->publish(twist_vel);
+            } else {
+              twist_vel.linear.x = distance * 0.53;
+              vel_pub->publish(twist_vel);
+            }
           } else {
             RCLCPP_INFO(client_node_->get_logger(), "Check 2: Docking finished");
             twist_vel.linear.x = 0.0;   // Setting 0 velocity
@@ -376,7 +383,7 @@ private:
       // init_guess.orientation.z = -offset_y_;
       // init_guess.orientation.w = -offset_y_;
 
-      rclcpp::Rate rate(2);
+      rclcpp::Rate rate(0.5);
 
       // Matching the contour once again
       contour_matching->setInitialGuess(init_guess);
