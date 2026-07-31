@@ -594,6 +594,13 @@ private:
 
     RCLCPP_INFO(this->get_logger(), "Starting to undock");
     rclcpp::Rate loop_rate(100);
+    constexpr int no_progress_timeout_seconds = 100;
+    const auto no_progress_timeout =
+      rclcpp::Duration::from_seconds(static_cast<double>(no_progress_timeout_seconds));
+    constexpr double minimum_progress = 0.001;  // metres
+    auto last_progress_time = this->get_clock()->now();
+    double last_progress_distance = 0.0;
+    bool timed_out = false;
 
     on_process_ = true;
 
@@ -606,7 +613,9 @@ private:
     try {
       robot_pose = buffer_->lookupTransform("map", base_link_, tf2::TimePointZero);
     } catch (const std::exception & ex) {
-      std::cout << "no trasformation found between map and base_footprint" << std::endl;
+      RCLCPP_ERROR(
+        this->get_logger(), "No transform found between map and %s: %s",
+        base_link_.c_str(), ex.what());
       return false;
     }
 
@@ -617,16 +626,31 @@ private:
     while (distance < undock_dist_) {
       if (!set_departing_) {
         set_departing_ = helper_set_safety(neo_msgs2::msg::SafetyMode::SM_DEPARTING);
+        if (set_departing_) {
+          last_progress_time = this->get_clock()->now();
+        }
         sleep_rate.sleep();
       }
       if (set_departing_) {
         try {
           robot_pose = buffer_->lookupTransform("map", base_link_, tf2::TimePointZero);
         } catch (const std::exception & ex) {
-          std::cout << "no trasformation found between map and base_footprint" << std::endl;
+          RCLCPP_ERROR(
+            this->get_logger(), "No transform found between map and %s: %s",
+            base_link_.c_str(), ex.what());
           return false;
         }
         distance = euclidean_distance(robot_docked_pose, robot_pose);
+
+        const auto now = this->get_clock()->now();
+        if (distance >= last_progress_distance + minimum_progress) {
+          last_progress_distance = distance;
+          last_progress_time = now;
+        } else if (now - last_progress_time >= no_progress_timeout) {
+          timed_out = true;
+          break;
+        }
+
         twist_vel.linear.x = -0.1;
 
         vel_pub->publish(twist_vel);
@@ -640,15 +664,24 @@ private:
 
     // Process finished
     on_process_ = false;
-    RCLCPP_INFO(client_node_->get_logger(), "Undocking finished");
     set_departing_ = false;
+
+    if (timed_out) {
+      RCLCPP_WARN(
+        this->get_logger(),
+        "Undocking timeout: robot made no progress for %d seconds",
+        no_progress_timeout_seconds);
+      return false;
+    }
+
+    RCLCPP_INFO(this->get_logger(), "Undocking finished");
 
     if (!set_none_) {
       set_none_ = helper_set_safety(neo_msgs2::msg::SafetyMode::SM_NONE);
     }
 
     sleep_rate.sleep();
-    RCLCPP_INFO(client_node_->get_logger(), "Setting to Mode Normal");
+    RCLCPP_INFO(this->get_logger(), "Setting to Mode Normal");
 
     // Restart contour matching.
     geometry_msgs::msg::Pose init_pose;
@@ -707,6 +740,10 @@ int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
   auto nh = std::make_shared<NeoDocking>();
+
+  if (!rclcpp::ok()) {
+    return 1;
+  }
 
   // multiple callback groups means multithreaded executor
   rclcpp::executors::MultiThreadedExecutor executor;
