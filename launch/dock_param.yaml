@@ -28,3 +28,8 @@ neo_docking2:
     # Contour matching algorithm takes of the inverse
     # In short - No negative value
     pre_dock_dist: 0.55
+
+    # Distance from the docking station at which approach mode is enabled,
+    # plus the tolerance applied to that threshold (metres).
+    approach_distance: 0.37
+    distance_tolerance: 0.005

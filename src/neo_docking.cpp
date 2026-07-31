@@ -80,6 +80,8 @@ public:
     this->declare_parameter<double>("offset_yaw", 0.03);
     this->declare_parameter<double>("undock_dist", 0.5);
     this->declare_parameter<double>("pre_dock_dist", 0.5);
+    this->declare_parameter<double>("approach_distance", 0.37);
+    this->declare_parameter<double>("distance_tolerance", 0.005);
     this->declare_parameter<std::string>("scan_topic", "/scan");
     this->declare_parameter<std::string>("pcd_source", "cloud_test.pcd");
 
@@ -94,6 +96,8 @@ public:
     this->get_parameter("pcd_source", pcd_source_);
     this->get_parameter("undock_dist", undock_dist_);
     this->get_parameter("pre_dock_dist", pre_dock_dist_);
+    this->get_parameter("approach_distance", approach_distance_);
+    this->get_parameter("distance_tolerance", distance_tolerance_);
 
     if (auto_detect_) {
       tf_static_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
@@ -282,12 +286,8 @@ public:
 
       auto robot_docking_pose = checkTransform;
 
-      // These distances need to be configurable by the user so they can set the approach mode.
-      constexpr double approach_distance = 0.37;
-      constexpr double distance_tolerance = 0.005;
-
       if (!set_approaching_ && !goal_reached_) {
-        if (distance > approach_distance + distance_tolerance) {
+        if (distance > approach_distance_ + distance_tolerance_) {
           RCLCPP_INFO_ONCE(client_node_->get_logger(), "Navigating in approach buffer");
           twist_vel.linear.x = smooth_velocity(0.05);
           vel_pub->publish(twist_vel);
@@ -348,8 +348,6 @@ public:
               distance);
           }
         }
-      } else {
-        // std::cout<<"safety not set"<<std::endl;
       }
       loop_rate.sleep();
     }
@@ -795,6 +793,8 @@ private:
   double adapt_inverse_ = 1.0;
   double undock_dist_ = 0.0;
   double pre_dock_dist_ = 0.0;
+  double approach_distance_ = 0.37;
+  double distance_tolerance_ = 0.005;
   bool use_nbx_safety_ = true;
 };
 
