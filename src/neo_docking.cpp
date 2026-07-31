@@ -87,6 +87,49 @@ public:
     this->get_parameter("approach_distance", approach_distance_);
     this->get_parameter("distance_tolerance", distance_tolerance_);
 
+    bool parameters_valid = true;
+    const auto require_finite = [this, &parameters_valid](
+      const char * name, const double value)
+      {
+        if (!std::isfinite(value)) {
+          RCLCPP_FATAL(this->get_logger(), "Parameter '%s' must be finite", name);
+          parameters_valid = false;
+        }
+      };
+    require_finite("offset_x", offset_x_);
+    require_finite("offset_y", offset_y_);
+    require_finite("offset_yaw", offset_yaw_);
+    require_finite("undock_dist", undock_dist_);
+    require_finite("pre_dock_dist", pre_dock_dist_);
+    require_finite("approach_distance", approach_distance_);
+    require_finite("distance_tolerance", distance_tolerance_);
+
+    if (undock_dist_ <= 0.0) {
+      RCLCPP_FATAL(this->get_logger(), "Parameter 'undock_dist' must be greater than zero");
+      parameters_valid = false;
+    }
+    if (pre_dock_dist_ <= 0.0) {
+      RCLCPP_FATAL(this->get_logger(), "Parameter 'pre_dock_dist' must be greater than zero");
+      parameters_valid = false;
+    }
+    if (approach_distance_ <= 0.0) {
+      RCLCPP_FATAL(this->get_logger(), "Parameter 'approach_distance' must be greater than zero");
+      parameters_valid = false;
+    }
+    if (distance_tolerance_ < 0.0) {
+      RCLCPP_FATAL(this->get_logger(), "Parameter 'distance_tolerance' must be zero or greater");
+      parameters_valid = false;
+    }
+    if (scan_topic_.empty()) {
+      RCLCPP_FATAL(this->get_logger(), "Parameter 'scan_topic' must not be empty");
+      parameters_valid = false;
+    }
+
+    if (!parameters_valid) {
+      rclcpp::shutdown();
+      return;
+    }
+
     tf_static_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
 
     // call to dock
