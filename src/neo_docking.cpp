@@ -47,7 +47,6 @@ SOFTWARE.
 
 #include "neo_srvs2/srv/relay_board_set_safety_mode.hpp"
 #include "neo_msgs2/msg/safety_mode.hpp"
-#include "neo_msgs2/msg/emergency_stop_state.hpp"
 
 using std::placeholders::_1;
 using std::placeholders::_2;
@@ -78,23 +77,17 @@ public:
     this->declare_parameter<double>("approach_distance", 0.37);
     this->declare_parameter<double>("distance_tolerance", 0.005);
     this->declare_parameter<std::string>("scan_topic", "/scan");
-    this->declare_parameter<std::string>("pcd_source", "cloud_test.pcd");
 
     this->get_parameter("offset_x", offset_x_);
     this->get_parameter("offset_y", offset_y_);
     this->get_parameter("offset_yaw", offset_yaw_);
     this->get_parameter("scan_topic", scan_topic_);
-    this->get_parameter("pcd_source", pcd_source_);
     this->get_parameter("undock_dist", undock_dist_);
     this->get_parameter("pre_dock_dist", pre_dock_dist_);
     this->get_parameter("approach_distance", approach_distance_);
     this->get_parameter("distance_tolerance", distance_tolerance_);
 
     tf_static_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
-
-    // Seperate callback group for laserscan subscription
-    sub_cb_grp_ = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
-    options.callback_group = sub_cb_grp_;
 
     // call to dock
     docking_srv_ = this->create_service<std_srvs::srv::Empty>(
@@ -103,14 +96,10 @@ public:
     undocking_srv_ = this->create_service<std_srvs::srv::Empty>(
       "undock_and_arm", std::bind(&NeoDocking::undock, this, _1, _2));
 
-    // client for handling nbx_safety
-    if (use_nbx_safety_) {
-      safety_client_node_ = std::make_shared<rclcpp::Node>("safety_client_node");
-      set_safety_client_ = safety_client_node_->create_client
-        <neo_srvs2::srv::RelayBoardSetSafetyMode>(
-        "set_safety_mode"
-        );
-      }
+    // Client for handling nbx_safety.
+    safety_client_node_ = std::make_shared<rclcpp::Node>("safety_client_node");
+    set_safety_client_ = safety_client_node_->create_client
+      <neo_srvs2::srv::RelayBoardSetSafetyMode>("set_safety_mode");
 
     buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
     transform_listener_ = std::make_shared<tf2_ros::TransformListener>(*buffer_);
@@ -123,14 +112,6 @@ public:
       offset_x_,
       offset_y_,
       offset_yaw_);
-    this->timer_inverse_check_ = this->create_wall_timer(
-      std::chrono::milliseconds(100),
-      std::bind(&NeoDocking::check_inversion, this),
-      sub_cb_grp_);
-
-    emergency_state_sub_ = safety_client_node_->create_subscription<neo_msgs2::msg::EmergencyStopState>(
-      "emergency_stop_state", 10, std::bind(&NeoDocking::em_callback, this, _1));
-
     // Publish static transforms once at startup
     this->make_transforms();
     dock_poses_.reserve(2);
@@ -201,16 +182,6 @@ public:
     }
   }
 
-  void check_inversion()
-  {
-    if (contour_matching->isInverted()) {
-      adapt_inverse_ = -1.0;
-      make_transforms();
-      timer_inverse_check_->cancel();
-      RCLCPP_INFO(this->get_logger(), "Transform inversion check complete");
-    }
-  }
-
   void start_final_approach()
   {
     RCLCPP_INFO(this->get_logger(), "Starting final approach");
@@ -267,8 +238,6 @@ public:
         nav_task_finished_ = false;
         goal_reached_ = true;
       }
-
-      auto robot_docking_pose = checkTransform;
 
       if (!set_approaching_ && !goal_reached_) {
         if (distance > approach_distance_ + distance_tolerance_) {
@@ -362,17 +331,10 @@ private:
     return std::hypot(dx, dy);
   }
 
-  void em_callback(const neo_msgs2::msg::EmergencyStopState::SharedPtr em_data)
-  {
-    auto data = em_data;
-    scanner_stop_ = data->scanner_stop;
-  }
-
   void result_pre_dock_callback(const NavigateToPoseGoalHandle::WrappedResult & result)
   {
     if (result.code == rclcpp_action::ResultCode::SUCCEEDED) {
       RCLCPP_INFO(this->get_logger(), "pre dock succeded");
-      pre_dock_succeeded_ = true;
       geometry_msgs::msg::Pose init_guess;
       contour_matching->startMatching();
 
@@ -475,9 +437,7 @@ private:
     // Send the goal poses
     waypoint_follower_goal_.poses = poses;
 
-    auto future_goal_handle =
-      waypoint_follower_action_client_->async_send_goal(waypoint_follower_goal_, send_goal_options);
-
+    waypoint_follower_action_client_->async_send_goal(waypoint_follower_goal_, send_goal_options);
   }
 
   void
@@ -495,8 +455,7 @@ private:
     // Send the goal poses
     nav_to_pos_goal_.pose = pose;
 
-    auto future_goal_handle =
-      navigate_to_pose_action_client_->async_send_goal(nav_to_pos_goal_, nav_to_goal_options);
+    navigate_to_pose_action_client_->async_send_goal(nav_to_pos_goal_, nav_to_goal_options);
   }
 
   void lookTransforms() {
@@ -545,8 +504,6 @@ private:
       return;
     }
 
-    geometry_msgs::msg::PoseStamped dock_pose = ConvertTransformToPose(tempTransform);
-
     // Check if the robot is in the docking position, if so do nothing
     if (euclidean_distance(tempTransform, robot_pose) < 0.05) {
 
@@ -571,10 +528,6 @@ private:
     on_process_ = true;
     
     contour_matching->stopMatching();
-
-    if (timer_inverse_check_) {
-      timer_inverse_check_->cancel();
-    }
 
     // Check and set the docking poses
     lookTransforms();
@@ -605,8 +558,6 @@ private:
      * and docking station positions in the map **/
 
     geometry_msgs::msg::TransformStamped robot_pose;
-    geometry_msgs::msg::TransformStamped checkTransform;
-
     double distance = 0.0;
 
     try {
@@ -659,17 +610,13 @@ private:
     // Restart contour matching.
     geometry_msgs::msg::Pose init_pose;
     contour_matching->setInitialGuess(init_pose);
-    adapt_inverse_ = 1.0;
-    timer_inverse_check_->reset();
     
     return true;
   }
 
   std::shared_ptr<tf2_ros::StaticTransformBroadcaster> tf_static_broadcaster_;
-  WaypointFollowerGoalHandle::SharedPtr waypoint_follower_goal_handle_;
   nav2_msgs::action::FollowWaypoints::Goal waypoint_follower_goal_;
 
-  NavigateToPoseGoalHandle::SharedPtr nav_to_pose_goal_handle_;
   nav2_msgs::action::NavigateToPose::Goal nav_to_pos_goal_;
 
   rclcpp_action::Client<nav2_msgs::action::FollowWaypoints>::SharedPtr
@@ -679,7 +626,6 @@ private:
 
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr docking_srv_;
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr undocking_srv_;
-  rclcpp::Subscription<neo_msgs2::msg::EmergencyStopState>::SharedPtr emergency_state_sub_;
 
   rclcpp::Client<neo_srvs2::srv::RelayBoardSetSafetyMode>::SharedPtr set_safety_client_;
 
@@ -692,37 +638,26 @@ private:
   std::shared_ptr<rclcpp::Node> client_node_;
 
   bool on_process_ = false;
-  bool pre_dock_succeeded_ = false;
   bool nav_task_finished_ = false;
   bool set_approaching_ = false;
   bool set_departing_ = false;
   bool set_none_ = false;
   bool goal_reached_ = false;
-  bool scanner_stop_ = false;
 
   std::string scan_topic_ = "scan";
-  std::string pcd_source_ = "scan";
   std::string docking_station_ = "docking_link";
-  std::string pre_dock_ = "pre_dock";
-  std::string pre_dock_2_ = "pre_dock2";
   std::string base_link_ = "base_footprint";
 
   rclcpp::TimerBase::SharedPtr timer_;
-  rclcpp::TimerBase::SharedPtr timer_inverse_check_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr vel_pub;
-
-  rclcpp::CallbackGroup::SharedPtr sub_cb_grp_;
-  rclcpp::SubscriptionOptions options;
 
   double offset_x_ = 0.0;
   double offset_y_ = 0.0;
   double offset_yaw_ = 0.0;
-  double adapt_inverse_ = 1.0;
   double undock_dist_ = 0.0;
   double pre_dock_dist_ = 0.0;
   double approach_distance_ = 0.37;
   double distance_tolerance_ = 0.005;
-  bool use_nbx_safety_ = true;
 };
 
 int main(int argc, char ** argv)
