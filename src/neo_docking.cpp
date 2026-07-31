@@ -43,7 +43,6 @@ SOFTWARE.
 #include "nav2_msgs/action/navigate_to_pose.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
 #include "std_srvs/srv/empty.hpp"
-#include "sensor_msgs/msg/laser_scan.hpp"
 #include "neo_perception2/contour_matching.hpp"
 
 #include "neo_srvs2/srv/relay_board_set_safety_mode.hpp"
@@ -71,10 +70,6 @@ public:
   NeoDocking()
   : Node("neo_docking2")
   {
-    this->declare_parameter<std::vector<double>>("pose", {-1, 0, 0});
-    this->declare_parameter<std::vector<double>>("orientation", {0, 0, 0.707, 0.707});
-    this->declare_parameter<double>("laser_ref", 0.17);
-    this->declare_parameter<bool>("auto_detect", true);
     this->declare_parameter<double>("offset_x", 0.70);
     this->declare_parameter<double>("offset_y", -0.37);
     this->declare_parameter<double>("offset_yaw", 0.03);
@@ -85,10 +80,6 @@ public:
     this->declare_parameter<std::string>("scan_topic", "/scan");
     this->declare_parameter<std::string>("pcd_source", "cloud_test.pcd");
 
-    this->get_parameter("pose", pose_array_);
-    this->get_parameter("orientation", orientation_array_);
-    this->get_parameter("laser_ref", laser_ref_);
-    this->get_parameter("auto_detect", auto_detect_);
     this->get_parameter("offset_x", offset_x_);
     this->get_parameter("offset_y", offset_y_);
     this->get_parameter("offset_yaw", offset_yaw_);
@@ -99,9 +90,7 @@ public:
     this->get_parameter("approach_distance", approach_distance_);
     this->get_parameter("distance_tolerance", distance_tolerance_);
 
-    if (auto_detect_) {
-      tf_static_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
-    }
+    tf_static_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
 
     // Seperate callback group for laserscan subscription
     sub_cb_grp_ = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
@@ -128,21 +117,16 @@ public:
 
     client_node_ = std::make_shared<rclcpp::Node>("docking_client_node");
 
-    if (auto_detect_) {
-      contour_matching = std::make_shared<ContourMatching>(this->create_sub_node("perception"),
-        scan_topic_,
-        offset_x_,
-        offset_y_,
-        offset_yaw_);
+    contour_matching = std::make_shared<ContourMatching>(
+      this->create_sub_node("perception"),
+      scan_topic_,
+      offset_x_,
+      offset_y_,
+      offset_yaw_);
     this->timer_inverse_check_ = this->create_wall_timer(
       std::chrono::milliseconds(100),
       std::bind(&NeoDocking::check_inversion, this),
       sub_cb_grp_);
-    } else {
-      sensor_sub = this->create_subscription<sensor_msgs::msg::LaserScan>(
-        "lidar_1/scan_filtered", 10, std::bind(&NeoDocking::scan_callback, this, _1),
-        options);
-    }
 
     emergency_state_sub_ = safety_client_node_->create_subscription<neo_msgs2::msg::EmergencyStopState>(
       "emergency_stop_state", 10, std::bind(&NeoDocking::em_callback, this, _1));
@@ -378,12 +362,6 @@ private:
     return std::hypot(dx, dy);
   }
 
-  void scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr sensor_data)
-  {
-    auto data = sensor_data;
-    store_laser_ref_ = data->ranges[static_cast<int>(data->ranges.size()) / 2];
-  }
-
   void em_callback(const neo_msgs2::msg::EmergencyStopState::SharedPtr em_data)
   {
     auto data = em_data;
@@ -392,9 +370,7 @@ private:
 
   void result_pre_dock_callback(const NavigateToPoseGoalHandle::WrappedResult & result)
   {
-    if (result.code == rclcpp_action::ResultCode::SUCCEEDED
-      && auto_detect_)
-    {
+    if (result.code == rclcpp_action::ResultCode::SUCCEEDED) {
       RCLCPP_INFO(this->get_logger(), "pre dock succeded");
       pre_dock_succeeded_ = true;
       geometry_msgs::msg::Pose init_guess;
@@ -421,9 +397,6 @@ private:
       contour_matching->stopMatching();
       rate.sleep();
 
-      auto_detect_ = false;
-      // make_transforms();
-
       dock_poses_.clear();
 
       // Look for and set the docking poses
@@ -447,26 +420,7 @@ private:
   // Broadcasting static transforms for the different poses involved in docking
   void make_transforms()
   {
-    geometry_msgs::msg::TransformStamped t;
-
-    // 1. Broadcast static tf pose for the exact position of the docking station
-    t.header.stamp = this->get_clock()->now();
-    if (!auto_detect_) {
-      t.header.frame_id = "map";
-      t.child_frame_id = docking_station_;
-
-      t.transform.translation.x = pose_array_[0];
-      t.transform.translation.y = pose_array_[1];
-      t.transform.translation.z = pose_array_[2];
-
-      t.transform.rotation.x = orientation_array_[1];
-      t.transform.rotation.y = orientation_array_[2];
-      t.transform.rotation.z = orientation_array_[3];
-      t.transform.rotation.w = orientation_array_[0];
-      tf_static_broadcaster_->sendTransform(t);
-    }
-
-    // 2. Broadcast static tf pose for the pre-pose of the docking station
+    // Broadcast static tf pose for the first pre-dock position.
     geometry_msgs::msg::TransformStamped t1;
 
     t1.header.stamp = this->get_clock()->now();
@@ -478,7 +432,7 @@ private:
 
     tf_static_broadcaster_->sendTransform(t1);
 
-    // 3. Broadcast static tf pose for the pre-pose2 of the docking station
+    // Broadcast static tf pose for the second pre-dock position.
     geometry_msgs::msg::TransformStamped t2;
 
     t2.header.stamp = this->get_clock()->now();
@@ -593,16 +547,6 @@ private:
 
     geometry_msgs::msg::PoseStamped dock_pose = ConvertTransformToPose(tempTransform);
 
-    pose_array_[0] = tempTransform.transform.translation.x;
-    pose_array_[1] = tempTransform.transform.translation.y;
-    pose_array_[2] = 0.0;
-
-    orientation_array_[0] = tempTransform.transform.rotation.x;
-    orientation_array_[1] = tempTransform.transform.rotation.y;
-    orientation_array_[2] = tempTransform.transform.rotation.z;
-    orientation_array_[3] = tempTransform.transform.rotation.w;
-
-
     // Check if the robot is in the docking position, if so do nothing
     if (euclidean_distance(tempTransform, robot_pose) < 0.05) {
 
@@ -638,15 +582,8 @@ private:
       return false;
     }
 
-    if (auto_detect_) {
-      goToPredock(dock_poses_[0]);
-      dock_poses_.clear();
-      return true;
-    }
-
-    set_none_ = false;
-    startWaypointFollowing(dock_poses_);
-
+    goToPredock(dock_poses_[0]);
+    dock_poses_.clear();
     return true;
   }
 
@@ -683,7 +620,7 @@ private:
     geometry_msgs::msg::Twist twist_vel;
     rclcpp::Rate sleep_rate(0.5);
 
-    while (distance < 0.5) {
+    while (distance < undock_dist_) {
       if (!set_departing_) {
         set_departing_ = helper_set_safety(neo_msgs2::msg::SafetyMode::SM_DEPARTING);
         sleep_rate.sleep();
@@ -719,22 +656,16 @@ private:
     sleep_rate.sleep();
     RCLCPP_INFO(client_node_->get_logger(), "Setting to Mode Normal");
 
-    // Restarting Contour matching
-    if (auto_detect_) {
-      geometry_msgs::msg::Pose init_pose_;
-      contour_matching->setInitialGuess(init_pose_);
-      adapt_inverse_ = 1.0;
-
-      // Restart the timer once again
-      timer_inverse_check_->reset();
-    }
+    // Restart contour matching.
+    geometry_msgs::msg::Pose init_pose;
+    contour_matching->setInitialGuess(init_pose);
+    adapt_inverse_ = 1.0;
+    timer_inverse_check_->reset();
     
     return true;
   }
 
   std::shared_ptr<tf2_ros::StaticTransformBroadcaster> tf_static_broadcaster_;
-  std::vector<double> pose_array_;
-  std::vector<double> orientation_array_;
   WaypointFollowerGoalHandle::SharedPtr waypoint_follower_goal_handle_;
   nav2_msgs::action::FollowWaypoints::Goal waypoint_follower_goal_;
 
@@ -748,7 +679,6 @@ private:
 
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr docking_srv_;
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr undocking_srv_;
-  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr sensor_sub;
   rclcpp::Subscription<neo_msgs2::msg::EmergencyStopState>::SharedPtr emergency_state_sub_;
 
   rclcpp::Client<neo_srvs2::srv::RelayBoardSetSafetyMode>::SharedPtr set_safety_client_;
@@ -762,7 +692,6 @@ private:
   std::shared_ptr<rclcpp::Node> client_node_;
 
   bool on_process_ = false;
-  bool auto_detect_ = true;
   bool pre_dock_succeeded_ = false;
   bool nav_task_finished_ = false;
   bool set_approaching_ = false;
@@ -785,8 +714,6 @@ private:
   rclcpp::CallbackGroup::SharedPtr sub_cb_grp_;
   rclcpp::SubscriptionOptions options;
 
-  double laser_ref_ = 0.0;
-  double store_laser_ref_ = 0.0;
   double offset_x_ = 0.0;
   double offset_y_ = 0.0;
   double offset_yaw_ = 0.0;
