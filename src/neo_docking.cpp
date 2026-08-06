@@ -33,6 +33,7 @@ SOFTWARE.
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <optional>
 
 #include "tf2_ros/static_transform_broadcaster.h"
 
@@ -124,7 +125,6 @@ public:
       RCLCPP_FATAL(this->get_logger(), "Parameter 'scan_topic' must not be empty");
       parameters_valid = false;
     }
-
     if (!parameters_valid) {
       rclcpp::shutdown();
       return;
@@ -227,9 +227,8 @@ public:
 
   void start_final_approach()
   {
-    RCLCPP_INFO(this->get_logger(), "Starting final approach");
+    RCLCPP_INFO(this->get_logger(), "Starting odom-based final approach");
     geometry_msgs::msg::TransformStamped robot_pose;
-    geometry_msgs::msg::TransformStamped checkTransform;
     rclcpp::Rate loop_rate(100);
     rclcpp::Time set_approach_time;
     rclcpp::Time last_velocity_update = this->get_clock()->now();
@@ -252,27 +251,57 @@ public:
         return commanded_linear_velocity;
       };
 
-    while (!goal_reached_) {
+    if (!frozen_docking_pose_in_odom_) {
+      RCLCPP_ERROR(
+        this->get_logger(),
+        "Cannot start final approach: no docking pose was frozen after contour matching");
+      geometry_msgs::msg::Twist stop_twist;
+      vel_pub->publish(stop_twist);
+      on_process_ = false;
+      nav_task_finished_ = false;
+      return;
+    }
+
+    const auto & docking_pose_in_odom = *frozen_docking_pose_in_odom_;
+
+    const auto & docking_rotation = docking_pose_in_odom.transform.rotation;
+    const tf2::Quaternion docking_orientation(
+      docking_rotation.x, docking_rotation.y, docking_rotation.z, docking_rotation.w);
+    const auto & docking_translation = docking_pose_in_odom.transform.translation;
+    const tf2::Transform frozen_docking_transform(
+      docking_orientation,
+      tf2::Vector3(docking_translation.x, docking_translation.y, docking_translation.z));
+    const tf2::Transform docking_from_odom = frozen_docking_transform.inverse();
+
+    while (rclcpp::ok() && !goal_reached_) {
       try {
-        robot_pose = buffer_->lookupTransform("map", base_link_, tf2::TimePointZero);
+        robot_pose = buffer_->lookupTransform(
+          final_approach_frame_, base_link_, tf2::TimePointZero);
       } catch (const std::exception & ex) {
-        std::cout << "no trasformation found between map and base_footprint" << std::endl;
-        goal_reached_ = true;
+        RCLCPP_ERROR(
+          this->get_logger(), "No transform found between %s and %s: %s",
+          final_approach_frame_.c_str(), base_link_.c_str(), ex.what());
+        geometry_msgs::msg::Twist stop_twist;
+        commanded_linear_velocity = 0.0;
+        vel_pub->publish(stop_twist);
+        on_process_ = false;
+        nav_task_finished_ = false;
+        break;
       }
 
-      try {
-        checkTransform = buffer_->lookupTransform("map", docking_station_, tf2::TimePointZero);
-      } catch (const std::exception & ex) {
-        std::cout << "no trasformation found between map and docking_station" << std::endl;
-        goal_reached_ = true;
-      }
-
-      // determine the distance of the robot from docking station
-      double distance = euclidean_distance(robot_pose, checkTransform);
+      // Express the live odom position in the frozen docking frame and use only
+      // its signed x-distance. No map transform is involved in this final loop.
+      const auto & robot_translation = robot_pose.transform.translation;
+      const tf2::Vector3 robot_position_in_docking = docking_from_odom *
+        tf2::Vector3(robot_translation.x, robot_translation.y, robot_translation.z);
+      const double remaining_distance = -robot_position_in_docking.x();
+      RCLCPP_INFO_THROTTLE(
+        this->get_logger(), *this->get_clock(), 500,
+        "Final approach x-distance in docking frame: %.4f m", remaining_distance);
       geometry_msgs::msg::Twist twist_vel;
 
       // additionaly layer check if docking has completed
-      if (distance <= 0.01) {
+      if (remaining_distance <= 0.015) {
         RCLCPP_INFO(client_node_->get_logger(), "Check 1: Docking finished");
         twist_vel.linear.x = 0.0;   // Setting 0 velocity
         commanded_linear_velocity = 0.0;
@@ -283,7 +312,7 @@ public:
       }
 
       if (!set_approaching_ && !goal_reached_) {
-        if (distance > approach_distance_ + distance_tolerance_) {
+        if (remaining_distance > approach_distance_ + distance_tolerance_) {
           RCLCPP_INFO_ONCE(client_node_->get_logger(), "Navigating in approach buffer");
           twist_vel.linear.x = smooth_velocity(0.05);
           vel_pub->publish(twist_vel);
@@ -305,27 +334,21 @@ public:
         }
       }
 
-      /** setting conditions for the robot to dock
-        * distance between the robot and docking station will vary
-        * depending on the localization. Therefore, using laser-
-        * reference to halt the robot **/
+      /** Set the conditions for the robot to dock. The laser-derived docking
+        * pose is fixed in odom so map localization corrections cannot move the
+        * final stopping target. **/
 
       if (set_approaching_ && !goal_reached_) {
         set_none_ = false;
         auto lapsed_time = (this->get_clock()->now() - set_approach_time).seconds();
         if (lapsed_time > 3.0) {
-          if (distance > 0.01 && lapsed_time < 12.0) {
-            try {
-              robot_pose = buffer_->lookupTransform("map", base_link_, tf2::TimePointZero);
-            } catch (const std::exception & ex) {
-              std::cout << "no trasformation found between map and base_footprint" << std::endl;
-              goal_reached_ = true;
-            }
+          if (remaining_distance > 0.01 && lapsed_time < 12.0) {
             constexpr double docking_speed = 0.05;
             constexpr double slowdown_distance = 0.045;
             constexpr double stop_distance = 0.01;
             const double normalized_distance = std::clamp(
-              (distance - stop_distance) / (slowdown_distance - stop_distance),
+              (remaining_distance - stop_distance) /
+              (slowdown_distance - stop_distance),
               0.0, 1.0);
             const double smoothstep = normalized_distance * normalized_distance *
               (3.0 - 2.0 * normalized_distance);
@@ -340,8 +363,8 @@ public:
             nav_task_finished_ = false;
             goal_reached_ = true;
             RCLCPP_INFO(client_node_->get_logger(),
-              "Check 2: Docking finished - the distance from the charging station is: %f",
-              distance);
+              "Check 2: Docking finished - remaining x-distance: %f",
+              remaining_distance);
           }
         }
       }
@@ -364,6 +387,28 @@ public:
   }
 
 private:
+  bool freeze_final_docking_pose()
+  {
+    try {
+      frozen_docking_pose_in_odom_ = buffer_->lookupTransform(
+        final_approach_frame_, docking_station_, tf2::TimePointZero);
+    } catch (const std::exception & ex) {
+      frozen_docking_pose_in_odom_.reset();
+      RCLCPP_ERROR(
+        this->get_logger(), "Cannot freeze docking pose from %s to %s: %s",
+        final_approach_frame_.c_str(), docking_station_.c_str(), ex.what());
+      return false;
+    }
+
+    const auto & frozen_pose = *frozen_docking_pose_in_odom_;
+    RCLCPP_INFO(
+      this->get_logger(), "Frozen final docking target in %s at x=%.3f, y=%.3f",
+      final_approach_frame_.c_str(),
+      frozen_pose.transform.translation.x,
+      frozen_pose.transform.translation.y);
+    return true;
+  }
+
   inline double euclidean_distance(
     geometry_msgs::msg::TransformStamped & pos1,
     const geometry_msgs::msg::TransformStamped & pos2)
@@ -401,6 +446,13 @@ private:
       // No need to match after setting the docking poses
       contour_matching->stopMatching();
       rate.sleep();
+
+      if (!freeze_final_docking_pose()) {
+        dock_poses_.clear();
+        on_process_ = false;
+        nav_task_finished_ = false;
+        return;
+      }
 
       dock_poses_.clear();
 
@@ -568,6 +620,8 @@ private:
 
     RCLCPP_INFO(this->get_logger(), "Starting to dock");
 
+    // Never allow a new docking run to reuse a target from an earlier run.
+    frozen_docking_pose_in_odom_.reset();
     on_process_ = true;
     
     contour_matching->stopMatching();
@@ -709,6 +763,7 @@ private:
   std::shared_ptr<ContourMatching> contour_matching;
   std::shared_ptr<tf2_ros::TransformListener> transform_listener_{nullptr};
   std::vector<geometry_msgs::msg::PoseStamped> dock_poses_;
+  std::optional<geometry_msgs::msg::TransformStamped> frozen_docking_pose_in_odom_;
 
   // extra node for docking client - for spinning multiple threads
   std::shared_ptr<rclcpp::Node> client_node_;
@@ -721,6 +776,7 @@ private:
   bool goal_reached_ = false;
 
   std::string scan_topic_ = "scan";
+  std::string final_approach_frame_ = "odom";
   std::string docking_station_ = "docking_link";
   std::string base_link_ = "base_footprint";
 

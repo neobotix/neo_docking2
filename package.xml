@@ -22,6 +22,7 @@
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>tf2_geometry_msgs</exec_depend>
   <exec_depend>neo_perception2</exec_depend>
+  <depend>neo_msgs2</depend>
   <exec_depend>neo_srvs2</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
