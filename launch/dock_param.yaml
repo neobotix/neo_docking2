@@ -5,13 +5,12 @@ neo_docking2:
     offset_y: -0.26
     offset_yaw: -0.56 # calibrate it until the necessary orientation for docking is reached
 
+    # For diff robots, these are the parameters
+    # offset_x: 0.59
+    # offset_y: -0.29
+
     # Scan topic that needs to considered for the contour matching
     scan_topic: "/lidar_1/scan_filtered"
-
-    # Broad pose-relative crop; GICP rejects more distant correspondences.
-    contour_matching.roi_half_width_x: 1.5
-    contour_matching.roi_half_width_y: 1.0
-    contour_matching.max_correspondence_distance: 0.1
 
     # Undocking distance - for now only in x-direction
     undock_dist: 0.5
@@ -24,4 +23,6 @@ neo_docking2:
     # Distance from the docking station at which approach mode is enabled,
     # plus the tolerance applied to that threshold (metres).
     approach_distance: 0.37
+    # For diff robots, these are the parameters
+    # approach_distance: 0.32
     distance_tolerance: 0.005
