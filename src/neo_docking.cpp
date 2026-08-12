@@ -457,7 +457,6 @@ private:
       // Look for and set the docking poses
       lookTransforms();
 
-      set_none_ = false;
       startWaypointFollowing(dock_poses_);
     }
   }
