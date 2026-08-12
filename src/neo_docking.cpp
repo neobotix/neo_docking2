@@ -325,7 +325,7 @@ public:
             commanded_linear_velocity = 0.0;
             twist_vel.linear.x = 0.0;
             vel_pub->publish(twist_vel);
-            // Safety field 4 was selected before docking navigation started.
+            // Safety field 8 was selected before docking navigation started.
             set_approaching_ = true;
             set_approach_time = this->get_clock()->now();
             last_velocity_update = set_approach_time;
@@ -631,7 +631,7 @@ private:
     }
 
     if (!helper_set_safety_field(docking_safety_field_)) {
-      RCLCPP_ERROR(this->get_logger(), "Cannot dock without safety field 4");
+      RCLCPP_ERROR(this->get_logger(), "Cannot dock without safety field 8");
       on_process_ = false;
       dock_poses_.clear();
       return false;
@@ -662,7 +662,7 @@ private:
     bool timed_out = false;
 
     if (!helper_set_safety_field(docking_safety_field_)) {
-      RCLCPP_ERROR(this->get_logger(), "Cannot undock without safety field 4");
+      RCLCPP_ERROR(this->get_logger(), "Cannot undock without safety field 8");
       return false;
     }
     last_progress_time = this->get_clock()->now();
@@ -779,7 +779,7 @@ private:
   bool set_approaching_ = false;
   bool goal_reached_ = false;
 
-  static constexpr uint32_t docking_safety_field_ = 4;
+  static constexpr uint32_t docking_safety_field_ = 8;
   static constexpr uint32_t normal_safety_field_ = 0;
 
   std::string scan_topic_ = "scan";

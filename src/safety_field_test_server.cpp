@@ -43,7 +43,7 @@ public:
         std::shared_ptr<SetSafetyField::Response> response)
       {
         const uint32_t field_id = request->field_id;
-        response->success = field_id == 0 || field_id == 4;
+        response->success = field_id == 0 || field_id == 8;
 
         RCLCPP_INFO(
           get_logger(), "Safety field request: field_id=%u, success=%s",
