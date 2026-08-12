@@ -25,47 +25,43 @@ SOFTWARE.
 #include <cstdint>
 #include <memory>
 
-#include "neo_msgs2/msg/safety_mode.hpp"
-#include "neo_srvs2/srv/relay_board_set_safety_mode.hpp"
+#include "neo_srvs2/srv/set_safety_field.hpp"
 #include "rclcpp/rclcpp.hpp"
 
-class SafetyModeTestServer : public rclcpp::Node
+class SafetyFieldTestServer : public rclcpp::Node
 {
 public:
-  using SetSafetyMode = neo_srvs2::srv::RelayBoardSetSafetyMode;
+  using SetSafetyField = neo_srvs2::srv::SetSafetyField;
 
-  SafetyModeTestServer()
-  : Node("safety_mode_test_server")
+  SafetyFieldTestServer()
+  : Node("safety_field_test_server")
   {
-    service_ = create_service<SetSafetyMode>(
-      "set_safety_mode",
+    service_ = create_service<SetSafetyField>(
+      "set_safety_field",
       [this](
-        const std::shared_ptr<SetSafetyMode::Request> request,
-        std::shared_ptr<SetSafetyMode::Response> response)
+        const std::shared_ptr<SetSafetyField::Request> request,
+        std::shared_ptr<SetSafetyField::Response> response)
       {
-        const uint8_t mode = request->set_safety_mode.mode;
-        response->success =
-          mode == neo_msgs2::msg::SafetyMode::SM_APPROACHING ||
-          mode == neo_msgs2::msg::SafetyMode::SM_DEPARTING;
+        const uint32_t field_id = request->field_id;
+        response->success = field_id == 0 || field_id == 4;
 
         RCLCPP_INFO(
-          get_logger(), "Safety mode request: mode=%u, station=%u, success=%s",
-          static_cast<unsigned int>(mode),
-          static_cast<unsigned int>(request->station),
+          get_logger(), "Safety field request: field_id=%u, success=%s",
+          field_id,
           response->success ? "true" : "false");
       });
 
-    RCLCPP_INFO(get_logger(), "Test service 'set_safety_mode' is ready");
+    RCLCPP_INFO(get_logger(), "Test service 'set_safety_field' is ready");
   }
 
 private:
-  rclcpp::Service<SetSafetyMode>::SharedPtr service_;
+  rclcpp::Service<SetSafetyField>::SharedPtr service_;
 };
 
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<SafetyModeTestServer>());
+  rclcpp::spin(std::make_shared<SafetyFieldTestServer>());
   rclcpp::shutdown();
   return 0;
 }

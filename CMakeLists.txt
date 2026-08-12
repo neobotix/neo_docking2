@@ -21,7 +21,6 @@ find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_eigen REQUIRED)
 find_package(tf2_eigen REQUIRED)
 find_package(laser_geometry REQUIRED)
-find_package(neo_msgs2 REQUIRED)
 find_package(neo_srvs2 REQUIRED)
 
 # uncomment the following section in order to fill in
@@ -29,7 +28,7 @@ find_package(neo_srvs2 REQUIRED)
 # find_package(<dependency> REQUIRED)
 
 add_executable(neo_docking2 src/neo_docking.cpp)
-add_executable(safety_mode_test_server src/safety_mode_test_server.cpp)
+add_executable(safety_field_test_server src/safety_field_test_server.cpp)
 
 ament_target_dependencies(neo_docking2
   rclcpp
@@ -46,9 +45,8 @@ ament_target_dependencies(neo_docking2
   neo_srvs2
   )
 
-ament_target_dependencies(safety_mode_test_server
+ament_target_dependencies(safety_field_test_server
   rclcpp
-  neo_msgs2
   neo_srvs2
   )
 
@@ -56,11 +54,11 @@ target_include_directories(neo_docking2 PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
 target_compile_features(neo_docking2 PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
-target_compile_features(safety_mode_test_server PUBLIC cxx_std_17)
+target_compile_features(safety_field_test_server PUBLIC cxx_std_17)
 
 install(TARGETS
   neo_docking2
-  safety_mode_test_server
+  safety_field_test_server
   DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY launch

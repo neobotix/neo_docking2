@@ -31,6 +31,7 @@ SOFTWARE.
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <fstream>
 #include <optional>
@@ -46,8 +47,7 @@ SOFTWARE.
 #include "std_srvs/srv/empty.hpp"
 #include "neo_perception2/contour_matching.hpp"
 
-#include "neo_srvs2/srv/relay_board_set_safety_mode.hpp"
-#include "neo_msgs2/msg/safety_mode.hpp"
+#include "neo_srvs2/srv/set_safety_field.hpp"
 
 using std::placeholders::_1;
 using std::placeholders::_2;
@@ -141,8 +141,8 @@ public:
 
     // Client for handling nbx_safety.
     safety_client_node_ = std::make_shared<rclcpp::Node>("safety_client_node");
-    set_safety_client_ = safety_client_node_->create_client
-      <neo_srvs2::srv::RelayBoardSetSafetyMode>("set_safety_mode");
+    set_safety_field_client_ = safety_client_node_->create_client
+      <neo_srvs2::srv::SetSafetyField>("set_safety_field");
 
     buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
     transform_listener_ = std::make_shared<tf2_ros::TransformListener>(*buffer_);
@@ -185,41 +185,42 @@ public:
       rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SendGoalOptions();
   }
 
-  bool helper_set_safety(const uint8_t & mode)
+  bool helper_set_safety_field(const uint32_t field_id)
   {
-    auto request = std::make_shared<neo_srvs2::srv::RelayBoardSetSafetyMode::Request>();
-    request->set_safety_mode.mode = mode;
-    request->station = 0;
+    auto request = std::make_shared<neo_srvs2::srv::SetSafetyField::Request>();
+    request->field_id = field_id;
 
     // Check service is available
-    while (!set_safety_client_->wait_for_service(1s)) {
+    while (!set_safety_field_client_->wait_for_service(1s)) {
       if (!rclcpp::ok()) {
         RCLCPP_ERROR(safety_client_node_->get_logger(),
-        "set_safety_mode service not found. Exiting.");
+        "set_safety_field service not found. Exiting.");
         return false;
       }
       RCLCPP_INFO(safety_client_node_->get_logger(),
-      "waiting for set_safety_mode service to be available");
+      "waiting for set_safety_field service to be available");
     }
 
-    // Send the request to set the safety
-    auto result = set_safety_client_->async_send_request(request);
+    auto result = set_safety_field_client_->async_send_request(request);
 
     if (result.wait_for(std::chrono::seconds(10)) == std::future_status::ready) {
       // The request is complete, process the result
       auto response = result.get();
       if (response->success) {
-        RCLCPP_INFO(safety_client_node_->get_logger(), "Safety setting request succeeded");
+        RCLCPP_INFO(
+          safety_client_node_->get_logger(), "Safety field set to %u", field_id);
         return true;
       } else {
-        RCLCPP_WARN(safety_client_node_->get_logger(), "Safety setting request failed");
+        RCLCPP_WARN(
+          safety_client_node_->get_logger(),
+          "Request to set safety field to %u failed", field_id);
         return false;
       }
     } else {
       // The request did not complete within the timeout
       RCLCPP_ERROR(
         safety_client_node_->get_logger(),
-        "Timeout while waiting for safety setting request to complete"
+        "Timeout while setting safety field to %u", field_id
       );
       return false;
     }
@@ -324,12 +325,10 @@ public:
             commanded_linear_velocity = 0.0;
             twist_vel.linear.x = 0.0;
             vel_pub->publish(twist_vel);
-            set_approaching_ = helper_set_safety(
-              neo_msgs2::msg::SafetyMode::SM_APPROACHING);
-            if (set_approaching_) {
-              set_approach_time = this->get_clock()->now();
-              last_velocity_update = set_approach_time;
-            }
+            // Safety field 4 was selected before docking navigation started.
+            set_approaching_ = true;
+            set_approach_time = this->get_clock()->now();
+            last_velocity_update = set_approach_time;
           }
         }
       }
@@ -339,7 +338,6 @@ public:
         * final stopping target. **/
 
       if (set_approaching_ && !goal_reached_) {
-        set_none_ = false;
         auto lapsed_time = (this->get_clock()->now() - set_approach_time).seconds();
         if (lapsed_time > 3.0) {
           if (remaining_distance > 0.01 && lapsed_time < 12.0) {
@@ -629,6 +627,14 @@ private:
     // Check and set the docking poses
     lookTransforms();
     if (dock_poses_.empty()){
+      on_process_ = false;
+      return false;
+    }
+
+    if (!helper_set_safety_field(docking_safety_field_)) {
+      RCLCPP_ERROR(this->get_logger(), "Cannot dock without safety field 4");
+      on_process_ = false;
+      dock_poses_.clear();
       return false;
     }
 
@@ -656,6 +662,12 @@ private:
     double last_progress_distance = 0.0;
     bool timed_out = false;
 
+    if (!helper_set_safety_field(docking_safety_field_)) {
+      RCLCPP_ERROR(this->get_logger(), "Cannot undock without safety field 4");
+      return false;
+    }
+    last_progress_time = this->get_clock()->now();
+
     on_process_ = true;
 
     /** Couple of variables to store the robot, pre-dock
@@ -670,6 +682,7 @@ private:
       RCLCPP_ERROR(
         this->get_logger(), "No transform found between map and %s: %s",
         base_link_.c_str(), ex.what());
+      on_process_ = false;
       return false;
     }
 
@@ -678,37 +691,31 @@ private:
     rclcpp::Rate sleep_rate(0.5);
 
     while (distance < undock_dist_) {
-      if (!set_departing_) {
-        set_departing_ = helper_set_safety(neo_msgs2::msg::SafetyMode::SM_DEPARTING);
-        if (set_departing_) {
-          last_progress_time = this->get_clock()->now();
-        }
-        sleep_rate.sleep();
+      try {
+        robot_pose = buffer_->lookupTransform("map", base_link_, tf2::TimePointZero);
+      } catch (const std::exception & ex) {
+        RCLCPP_ERROR(
+          this->get_logger(), "No transform found between map and %s: %s",
+          base_link_.c_str(), ex.what());
+        geometry_msgs::msg::Twist stop_twist;
+        vel_pub->publish(stop_twist);
+        on_process_ = false;
+        return false;
       }
-      if (set_departing_) {
-        try {
-          robot_pose = buffer_->lookupTransform("map", base_link_, tf2::TimePointZero);
-        } catch (const std::exception & ex) {
-          RCLCPP_ERROR(
-            this->get_logger(), "No transform found between map and %s: %s",
-            base_link_.c_str(), ex.what());
-          return false;
-        }
-        distance = euclidean_distance(robot_docked_pose, robot_pose);
+      distance = euclidean_distance(robot_docked_pose, robot_pose);
 
-        const auto now = this->get_clock()->now();
-        if (distance >= last_progress_distance + minimum_progress) {
-          last_progress_distance = distance;
-          last_progress_time = now;
-        } else if (now - last_progress_time >= no_progress_timeout) {
-          timed_out = true;
-          break;
-        }
-
-        twist_vel.linear.x = -0.1;
-
-        vel_pub->publish(twist_vel);
+      const auto now = this->get_clock()->now();
+      if (distance >= last_progress_distance + minimum_progress) {
+        last_progress_distance = distance;
+        last_progress_time = now;
+      } else if (now - last_progress_time >= no_progress_timeout) {
+        timed_out = true;
+        break;
       }
+
+      twist_vel.linear.x = -0.1;
+
+      vel_pub->publish(twist_vel);
       loop_rate.sleep();
     }
 
@@ -718,7 +725,6 @@ private:
 
     // Process finished
     on_process_ = false;
-    set_departing_ = false;
 
     if (timed_out) {
       RCLCPP_WARN(
@@ -730,12 +736,13 @@ private:
 
     RCLCPP_INFO(this->get_logger(), "Undocking finished");
 
-    if (!set_none_) {
-      set_none_ = helper_set_safety(neo_msgs2::msg::SafetyMode::SM_NONE);
+    if (!helper_set_safety_field(normal_safety_field_)) {
+      RCLCPP_ERROR(this->get_logger(), "Undocked, but failed to restore safety field 0");
+      return false;
     }
 
     sleep_rate.sleep();
-    RCLCPP_INFO(this->get_logger(), "Setting to Mode Normal");
+    RCLCPP_INFO(this->get_logger(), "Restored safety field 0");
 
     // Restart contour matching.
     geometry_msgs::msg::Pose init_pose;
@@ -757,7 +764,7 @@ private:
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr docking_srv_;
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr undocking_srv_;
 
-  rclcpp::Client<neo_srvs2::srv::RelayBoardSetSafetyMode>::SharedPtr set_safety_client_;
+  rclcpp::Client<neo_srvs2::srv::SetSafetyField>::SharedPtr set_safety_field_client_;
 
   std::unique_ptr<tf2_ros::Buffer> buffer_;
   std::shared_ptr<ContourMatching> contour_matching;
@@ -771,9 +778,10 @@ private:
   bool on_process_ = false;
   bool nav_task_finished_ = false;
   bool set_approaching_ = false;
-  bool set_departing_ = false;
-  bool set_none_ = false;
   bool goal_reached_ = false;
+
+  static constexpr uint32_t docking_safety_field_ = 4;
+  static constexpr uint32_t normal_safety_field_ = 0;
 
   std::string scan_topic_ = "scan";
   std::string final_approach_frame_ = "odom";
