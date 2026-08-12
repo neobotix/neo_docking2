@@ -340,7 +340,7 @@ public:
       if (set_approaching_ && !goal_reached_) {
         auto lapsed_time = (this->get_clock()->now() - set_approach_time).seconds();
         if (lapsed_time > 3.0) {
-          if (remaining_distance > 0.01 && lapsed_time < 12.0) {
+          if (remaining_distance > 0.01 && lapsed_time < 14.0) {
             constexpr double docking_speed = 0.05;
             constexpr double slowdown_distance = 0.045;
             constexpr double stop_distance = 0.01;
