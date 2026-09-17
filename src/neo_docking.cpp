@@ -423,24 +423,17 @@ private:
   {
     if (result.code == rclcpp_action::ResultCode::SUCCEEDED) {
       RCLCPP_INFO(this->get_logger(), "pre dock succeded");
-      geometry_msgs::msg::Pose init_guess;
       contour_matching->startMatching();
 
       RCLCPP_INFO(
         this->get_logger(),
-        "resetting initial guess");
-
-      init_guess.position.x = 0.0;
-      init_guess.position.y = -offset_y_;
-      // init_guess.orientation.x = -offset_y_;
-      // init_guess.orientation.y = -offset_y_;
-      // init_guess.orientation.z = -offset_y_;
-      // init_guess.orientation.w = -offset_y_;
+        "refining contour from the last accepted pose");
 
       rclcpp::Rate rate(0.5);
 
-      // Matching the contour once again
-      contour_matching->setInitialGuess(init_guess);
+      // Match once again using the accepted fixed-frame pose as the seed. The
+      // matcher converts it through the current robot-to-lidar transform, so
+      // motion since the first match is already accounted for.
       rate.sleep();
 
       // No need to match after setting the docking poses
@@ -738,8 +731,7 @@ private:
     RCLCPP_INFO(this->get_logger(), "Setting to Mode Normal");
 
     // Restart contour matching.
-    geometry_msgs::msg::Pose init_pose;
-    contour_matching->setInitialGuess(init_pose);
+    contour_matching->setInitialGuess(0.0, 0.0, 0.0);
     
     return true;
   }
