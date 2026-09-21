@@ -597,6 +597,13 @@ private:
       return false;
     }
 
+    if (!contour_matching->isMatchingEnabled()) {
+      RCLCPP_ERROR(
+        this->get_logger(),
+        "Contour matching is stopped. Call start_matching before go_and_dock");
+      return false;
+    }
+
     RCLCPP_INFO(this->get_logger(), "Starting to dock");
 
     dock_poses_.clear();
@@ -723,8 +730,11 @@ private:
     sleep_rate.sleep();
     RCLCPP_INFO(this->get_logger(), "Setting to Mode Normal");
 
-    // Restart contour matching without overwriting the existing initial guess.
-    contour_matching->startMatching();
+    // Require the user to start contour matching before the next docking cycle.
+    contour_matching->resetMatching();
+    RCLCPP_INFO(
+      this->get_logger(),
+      "Contour matching stopped; call start_matching before docking again");
     
     return true;
   }
