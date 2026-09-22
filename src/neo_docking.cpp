@@ -444,6 +444,7 @@ private:
         dock_poses_.clear();
         on_process_ = false;
         nav_task_finished_ = false;
+        contour_matching->startMatching();
         return;
       }
 
@@ -451,9 +452,24 @@ private:
 
       // Look for and set the docking poses
       lookTransforms();
+      if (dock_poses_.empty()) {
+        RCLCPP_ERROR(this->get_logger(), "Could not determine the refined docking poses");
+        nav_task_finished_ = false;
+        on_process_ = false;
+        contour_matching->startMatching();
+        return;
+      }
 
       set_none_ = false;
       startWaypointFollowing(dock_poses_);
+    } else {
+      RCLCPP_ERROR(
+        this->get_logger(), "Navigation to the pre-dock pose failed (result code: %d)",
+        static_cast<int>(result.code));
+      dock_poses_.clear();
+      nav_task_finished_ = false;
+      on_process_ = false;
+      contour_matching->startMatching();
     }
   }
 
@@ -464,6 +480,14 @@ private:
       nav_task_finished_ = true;
       // make_transforms();
       start_final_approach();
+    } else {
+      RCLCPP_ERROR(
+        this->get_logger(), "Docking waypoint navigation failed (result code: %d)",
+        static_cast<int>(result.code));
+      dock_poses_.clear();
+      nav_task_finished_ = false;
+      on_process_ = false;
+      contour_matching->startMatching();
     }
   }
 
@@ -519,6 +543,10 @@ private:
       RCLCPP_ERROR(
         client_node_->get_logger(), "follow_waypoints action server is not available."
         " Is the initial pose set?");
+      dock_poses_.clear();
+      nav_task_finished_ = false;
+      on_process_ = false;
+      contour_matching->startMatching();
       return;
     }
 
@@ -537,6 +565,10 @@ private:
       RCLCPP_ERROR(
         client_node_->get_logger(), "follow_waypoints action server is not available."
         " Is the initial pose set?");
+      dock_poses_.clear();
+      nav_task_finished_ = false;
+      on_process_ = false;
+      contour_matching->startMatching();
       return;
     }
 
@@ -611,17 +643,27 @@ private:
       return false;
     }
 
+    if (!contour_matching->isMatchingEnabled()) {
+      RCLCPP_ERROR(
+        this->get_logger(),
+        "Contour matching is stopped. Call start_matching before go_and_dock");
+      return false;
+    }
+
     RCLCPP_INFO(this->get_logger(), "Starting to dock");
 
     // Never allow a new docking run to reuse a target from an earlier run.
     frozen_docking_pose_in_odom_.reset();
+    dock_poses_.clear();
     on_process_ = true;
     
     contour_matching->stopMatching();
 
     // Check and set the docking poses
     lookTransforms();
-    if (dock_poses_.empty()){
+    if (dock_poses_.empty()) {
+      contour_matching->startMatching();
+      on_process_ = false;
       return false;
     }
 
@@ -663,6 +705,8 @@ private:
       RCLCPP_ERROR(
         this->get_logger(), "No transform found between map and %s: %s",
         base_link_.c_str(), ex.what());
+      set_departing_ = false;
+      on_process_ = false;
       return false;
     }
 
@@ -685,6 +729,10 @@ private:
           RCLCPP_ERROR(
             this->get_logger(), "No transform found between map and %s: %s",
             base_link_.c_str(), ex.what());
+          twist_vel.linear.x = 0.0;
+          vel_pub->publish(twist_vel);
+          set_departing_ = false;
+          on_process_ = false;
           return false;
         }
         distance = euclidean_distance(robot_docked_pose, robot_pose);
@@ -730,8 +778,11 @@ private:
     sleep_rate.sleep();
     RCLCPP_INFO(this->get_logger(), "Setting to Mode Normal");
 
-    // Restart contour matching.
-    contour_matching->setInitialGuess(0.0, 0.0, 0.0);
+    // Require the user to start contour matching before the next docking cycle.
+    contour_matching->resetMatching();
+    RCLCPP_INFO(
+      this->get_logger(),
+      "Contour matching stopped; call start_matching before docking again");
     
     return true;
   }
