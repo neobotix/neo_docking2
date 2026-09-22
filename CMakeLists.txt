@@ -43,6 +43,7 @@ ament_target_dependencies(neo_docking2
   tf2_geometry_msgs
   tf2_eigen
   laser_geometry
+  neo_msgs2
   neo_srvs2
   )
 
