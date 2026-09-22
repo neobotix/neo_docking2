@@ -33,6 +33,7 @@ SOFTWARE.
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <limits>
 
 #include "tf2_ros/static_transform_broadcaster.h"
 
@@ -46,6 +47,7 @@ SOFTWARE.
 #include "neo_perception2/contour_matching.hpp"
 
 #include "neo_srvs2/srv/relay_board_set_safety_mode.hpp"
+#include "neo_msgs2/msg/docking_status.hpp"
 #include "neo_msgs2/msg/safety_mode.hpp"
 
 using std::placeholders::_1;
@@ -160,6 +162,8 @@ public:
     dock_poses_.reserve(2);
 
     vel_pub = this->create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 1);
+    docking_status_pub_ = this->create_publisher<neo_msgs2::msg::DockingStatus>(
+      "docking_status", rclcpp::QoS(1).reliable().transient_local());
 
     waypoint_follower_action_client_ =
       rclcpp_action::create_client<nav2_msgs::action::FollowWaypoints>(
@@ -253,11 +257,13 @@ public:
       };
 
     while (!goal_reached_) {
+      bool transforms_available = true;
       try {
         robot_pose = buffer_->lookupTransform("map", base_link_, tf2::TimePointZero);
       } catch (const std::exception & ex) {
         std::cout << "no trasformation found between map and base_footprint" << std::endl;
         goal_reached_ = true;
+        transforms_available = false;
       }
 
       try {
@@ -265,14 +271,22 @@ public:
       } catch (const std::exception & ex) {
         std::cout << "no trasformation found between map and docking_station" << std::endl;
         goal_reached_ = true;
+        transforms_available = false;
+      }
+
+      if (!transforms_available) {
+        publish_current_docking_status(false);
+        loop_rate.sleep();
+        continue;
       }
 
       // determine the distance of the robot from docking station
       double distance = euclidean_distance(robot_pose, checkTransform);
+      bool docking_finished = false;
       geometry_msgs::msg::Twist twist_vel;
 
       // additionaly layer check if docking has completed
-      if (distance <= 0.01) {
+      if (distance <= docking_stop_distance_) {
         RCLCPP_INFO(client_node_->get_logger(), "Check 1: Docking finished");
         twist_vel.linear.x = 0.0;   // Setting 0 velocity
         commanded_linear_velocity = 0.0;
@@ -280,6 +294,7 @@ public:
         on_process_ = false;
         nav_task_finished_ = false;
         goal_reached_ = true;
+        docking_finished = true;
       }
 
       if (!set_approaching_ && !goal_reached_) {
@@ -314,7 +329,7 @@ public:
         set_none_ = false;
         auto lapsed_time = (this->get_clock()->now() - set_approach_time).seconds();
         if (lapsed_time > 3.0) {
-          if (distance > 0.01 && lapsed_time < 12.0) {
+          if (distance > docking_stop_distance_ && lapsed_time < 12.0) {
             try {
               robot_pose = buffer_->lookupTransform("map", base_link_, tf2::TimePointZero);
             } catch (const std::exception & ex) {
@@ -323,9 +338,9 @@ public:
             }
             constexpr double docking_speed = 0.05;
             constexpr double slowdown_distance = 0.045;
-            constexpr double stop_distance = 0.01;
             const double normalized_distance = std::clamp(
-              (distance - stop_distance) / (slowdown_distance - stop_distance),
+              (distance - docking_stop_distance_) /
+              (slowdown_distance - docking_stop_distance_),
               0.0, 1.0);
             const double smoothstep = normalized_distance * normalized_distance *
               (3.0 - 2.0 * normalized_distance);
@@ -339,12 +354,14 @@ public:
             on_process_ = false;
             nav_task_finished_ = false;
             goal_reached_ = true;
+            docking_finished = true; // doesn't show that true docking is over, user needs to use the distance. 
             RCLCPP_INFO(client_node_->get_logger(),
               "Check 2: Docking finished - the distance from the charging station is: %f",
               distance);
           }
         }
       }
+      publish_current_docking_status(docking_finished);
       loop_rate.sleep();
     }
     set_approaching_ = false;
@@ -372,6 +389,47 @@ private:
     double dy = pos1.transform.translation.y - pos2.transform.translation.y;
 
     return std::hypot(dx, dy);
+  }
+
+  void publish_operation_status(
+    const double distance_remaining,
+    const bool finished)
+  {
+    neo_msgs2::msg::DockingStatus status;
+    status.header.stamp = this->get_clock()->now();
+    status.header.frame_id = base_link_;
+    status.distance_remaining = std::isfinite(distance_remaining) ?
+      std::max(0.0, distance_remaining) : distance_remaining;
+    status.finished = finished;
+    docking_status_pub_->publish(status);
+  }
+
+  bool lookup_docking_station_distance(double & distance)
+  {
+    try {
+      const auto docking_pose = buffer_->lookupTransform(
+        base_link_, docking_station_, tf2::TimePointZero);
+      distance = std::hypot(
+        docking_pose.transform.translation.x,
+        docking_pose.transform.translation.y);
+      return true;
+    } catch (const std::exception &) {
+      distance = std::numeric_limits<double>::quiet_NaN();
+      return false;
+    }
+  }
+
+  void publish_current_docking_status(const bool docking_finished)
+  {
+    double distance_to_station = std::numeric_limits<double>::quiet_NaN();
+    if (lookup_docking_station_distance(distance_to_station)) {
+      publish_operation_status(
+        std::max(0.0, distance_to_station - docking_stop_distance_),
+        docking_finished);
+    } else {
+      publish_operation_status(
+        std::numeric_limits<double>::quiet_NaN(), docking_finished);
+    }
   }
 
   void result_pre_dock_callback(const NavigateToPoseGoalHandle::WrappedResult & result)
@@ -605,6 +663,7 @@ private:
     }
 
     RCLCPP_INFO(this->get_logger(), "Starting to dock");
+    publish_current_docking_status(false);
 
     dock_poses_.clear();
     on_process_ = true;
@@ -634,6 +693,7 @@ private:
     }
 
     RCLCPP_INFO(this->get_logger(), "Starting to undock");
+    publish_operation_status(undock_dist_, false);
     rclcpp::Rate loop_rate(100);
     constexpr int no_progress_timeout_seconds = 100;
     const auto no_progress_timeout =
@@ -665,6 +725,9 @@ private:
     auto robot_docked_pose = robot_pose;
     geometry_msgs::msg::Twist twist_vel;
     rclcpp::Rate sleep_rate(0.5);
+    double undock_start_station_distance = std::numeric_limits<double>::quiet_NaN();
+    const bool has_undock_start_station_distance =
+      lookup_docking_station_distance(undock_start_station_distance);
 
     while (distance < undock_dist_) {
       if (!set_departing_) {
@@ -688,6 +751,16 @@ private:
           return false;
         }
         distance = euclidean_distance(robot_docked_pose, robot_pose);
+        double undock_distance_travelled = distance;
+        double current_station_distance = std::numeric_limits<double>::quiet_NaN();
+        if (has_undock_start_station_distance &&
+          lookup_docking_station_distance(current_station_distance))
+        {
+          undock_distance_travelled = std::max(
+            0.0, current_station_distance - undock_start_station_distance);
+        }
+        publish_operation_status(
+          std::max(0.0, undock_dist_ - undock_distance_travelled), false);
 
         const auto now = this->get_clock()->now();
         if (distance >= last_progress_distance + minimum_progress) {
@@ -722,6 +795,7 @@ private:
     }
 
     RCLCPP_INFO(this->get_logger(), "Undocking finished");
+    publish_operation_status(0.0, true);
 
     if (!set_none_) {
       set_none_ = helper_set_safety(neo_msgs2::msg::SafetyMode::SM_NONE);
@@ -775,6 +849,7 @@ private:
 
   rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr vel_pub;
+  rclcpp::Publisher<neo_msgs2::msg::DockingStatus>::SharedPtr docking_status_pub_;
 
   double offset_x_ = 0.0;
   double offset_y_ = 0.0;
@@ -783,6 +858,7 @@ private:
   double pre_dock_dist_ = 0.0;
   double approach_distance_ = 0.37;
   double distance_tolerance_ = 0.005;
+  static constexpr double docking_stop_distance_ = 0.01;
 };
 
 int main(int argc, char ** argv)
