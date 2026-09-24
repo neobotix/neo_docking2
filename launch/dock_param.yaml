@@ -12,6 +12,12 @@ neo_docking2:
     # Scan topic that needs to considered for the contour matching
     scan_topic: "/lidar_1/scan_filtered"
 
+    # Initial contour correction in base_link, applied when start_matching is called.
+    # Yaw is in radians. Adjust these for the expected parked pose in front of the wallbox.
+    initial_guess_x: 0.0
+    initial_guess_y: 0.0
+    initial_guess_yaw: 0.0
+
     # Undocking distance - for now only in x-direction
     undock_dist: 0.5
 
