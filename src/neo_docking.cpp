@@ -62,10 +62,14 @@ public:
     this->declare_parameter<std::vector<double>>("pose", {-1, 0, 0});
     this->declare_parameter<std::vector<double>>("orientation", {0, 0, 0.707, 0.707});
     this->declare_parameter<double>("laser_ref", 0.32);
+    this->declare_parameter<double>("xy_goal_tolerance", 0.005);
+    this->declare_parameter<bool>("corner_scanners", true);
 
     this->get_parameter("pose", pose_array_);
     this->get_parameter("orientation", orientation_array_);
     this->get_parameter("laser_ref", laser_ref_);
+    this->get_parameter("xy_goal_tolerance", goal_tol_);
+    this->get_parameter("corner_scanners", corner_scanners_);
 
     tf_static_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
 
@@ -74,7 +78,7 @@ public:
 
     robot_namespace.erase(0,1);
 
-    if (robot_namespace != "/")
+    if (robot_namespace != "")
     {
       RCLCPP_INFO(this->get_logger(), "automatically configuring namespace support");
       docking_station_ = robot_namespace + "/" + docking_station_;
@@ -154,23 +158,26 @@ public:
 
       // determine the distance of the robot from docking station
       double distance = euclidean_distance(robot_pose, checkTransform);
+      geometry_msgs::msg::Twist twist_vel;
 
       // additionaly layer check if docking has completed
-      if (distance <= 0.015) {
+      if (distance <= goal_tol_) {
         RCLCPP_INFO(client_node_->get_logger(), "Docking finished");
+        twist_vel.linear.x = 0.000;   // Setting 0 velocity
+        vel_pub->publish(twist_vel);
+        RCLCPP_INFO(client_node_->get_logger(), "Distance to the stored pose %f", distance);
         on_process_ = false;
         nav_task_finished_ = false;
         return;
       }
 
       auto robot_docking_pose = checkTransform;
-      geometry_msgs::msg::Twist twist_vel;
 
       /** setting conditions for the robot to dock
        * distance between the robot and docking station will vary
        * depending on the localization. Therefore, using laser-
        * reference to halt the robot **/
-      if (distance > 0.015 && laser_ref_ < store_laser_ref_) {
+      if (distance > goal_tol_ && (laser_ref_ - 0.01) < store_laser_ref_) {
         try {
           robot_pose = buffer_->lookupTransform("map", base_link_, tf2::TimePointZero);
         } catch (const std::exception & ex) {
@@ -182,8 +189,9 @@ public:
         vel_pub->publish(twist_vel);
       } else {
         RCLCPP_INFO(client_node_->get_logger(), "Docking finished");
-        twist_vel.linear.x = 0.0;   // Setting 0 velocity
+        twist_vel.linear.x = 0.000;   // Setting 0 velocity
         vel_pub->publish(twist_vel);
+        RCLCPP_INFO(client_node_->get_logger(), "Distance to the stored pose %f", distance);
         on_process_ = false;
         nav_task_finished_ = false;
       }
@@ -205,7 +213,12 @@ private:
   void scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr sensor_data)
   {
     auto data = sensor_data;
-    store_laser_ref_ = data->ranges[static_cast<int>(data->ranges.size()) / 2];
+    if (corner_scanners_) {
+      store_laser_ref_ = data->ranges[static_cast<int>(data->ranges.size()) - 1];
+    } else {
+      store_laser_ref_ = data->ranges[static_cast<int>(data->ranges.size()) / 2]; 
+    }
+    
   }
 
   void result_callback(const WaypointFollowerGoalHandle::WrappedResult & result)
@@ -529,6 +542,8 @@ private:
 
   double laser_ref_ = 0.0;
   double store_laser_ref_ = 0.0;
+  double goal_tol_ = 0.0;
+  bool corner_scanners_ = true;
 
   std::string robot_namespace;
 
