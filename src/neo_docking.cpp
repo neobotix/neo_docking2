@@ -764,6 +764,7 @@ private:
     auto robot_docked_pose = robot_pose;
     geometry_msgs::msg::Twist twist_vel;
     rclcpp::Rate sleep_rate(0.5);
+    double undock_distance_remaining = undock_dist_;
     double undock_start_station_distance = std::numeric_limits<double>::quiet_NaN();
     const bool has_undock_start_station_distance =
       lookup_docking_station_distance(undock_start_station_distance);
@@ -798,8 +799,9 @@ private:
           undock_distance_travelled = std::max(
             0.0, current_station_distance - undock_start_station_distance);
         }
-        publish_operation_status(
-          std::max(0.0, undock_dist_ - undock_distance_travelled), false);
+        undock_distance_remaining = std::max(
+          0.0, undock_dist_ - undock_distance_travelled);
+        publish_operation_status(undock_distance_remaining, false);
 
         const auto now = this->get_clock()->now();
         if (distance >= last_progress_distance + minimum_progress) {
@@ -828,13 +830,12 @@ private:
     if (timed_out) {
       RCLCPP_WARN(
         this->get_logger(),
-        "Undocking timeout: robot made no progress for %d seconds",
-        no_progress_timeout_seconds);
-      return false;
+        "Undocking finished after no progress for %d seconds; %.3f m remains",
+        no_progress_timeout_seconds, undock_distance_remaining);
+    } else {
+      RCLCPP_INFO(this->get_logger(), "Undocking finished");
     }
-
-    RCLCPP_INFO(this->get_logger(), "Undocking finished");
-    publish_operation_status(0.0, true);
+    publish_operation_status(undock_distance_remaining, true);
 
     if (!set_none_) {
       set_none_ = helper_set_safety(neo_msgs2::msg::SafetyMode::SM_NONE);
