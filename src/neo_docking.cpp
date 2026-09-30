@@ -237,9 +237,11 @@ public:
     rclcpp::Time set_approach_time;
     rclcpp::Time last_velocity_update = this->get_clock()->now();
     double commanded_linear_velocity = 0.0;
+    double approach_start_distance = std::numeric_limits<double>::quiet_NaN();
 
     constexpr double max_acceleration = 0.10;  // m/s^2
     constexpr double max_deceleration = 0.15;  // m/s^2
+    constexpr double no_motion_tolerance = 0.005;  // metres
     auto smooth_velocity = [&](const double target_velocity) {
         const auto now = this->get_clock()->now();
         const double dt = std::clamp(
@@ -336,6 +338,7 @@ public:
             if (set_approaching_) {
               set_approach_time = this->get_clock()->now();
               last_velocity_update = set_approach_time;
+              approach_start_distance = remaining_distance;
             }
           }
         }
@@ -370,8 +373,20 @@ public:
             goal_reached_ = true;
             docking_finished = true;
             RCLCPP_INFO(client_node_->get_logger(),
-              "Check 2: Docking finished - remaining x-distance: %f",
+              "Check 2: Docking process finished - remaining x-distance: %f",
               remaining_distance);
+            const bool robot_did_not_move =
+              std::isfinite(approach_start_distance) &&
+              std::abs(approach_start_distance - remaining_distance) <=
+              no_motion_tolerance;
+            if (remaining_distance > docking_stop_distance_ &&
+              robot_did_not_move)
+            {
+              RCLCPP_WARN(
+                this->get_logger(),
+                "A scanner stop was raised while checking for the contour of the Wallbox. "
+                "Please check the protective field settings.");
+            }
           }
         }
       }
