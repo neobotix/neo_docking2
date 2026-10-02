@@ -23,6 +23,7 @@ find_package(tf2_eigen REQUIRED)
 find_package(laser_geometry REQUIRED)
 find_package(neo_msgs2 REQUIRED)
 find_package(neo_srvs2 REQUIRED)
+find_package(neo_actions2 REQUIRED)
 
 # uncomment the following section in order to fill in
 # further dependencies manually.
@@ -33,6 +34,7 @@ add_executable(safety_mode_test_server src/safety_mode_test_server.cpp)
 
 ament_target_dependencies(neo_docking2
   rclcpp
+  rclcpp_action
   tf2_ros
   sensor_msgs
   geometry_msgs
@@ -45,12 +47,14 @@ ament_target_dependencies(neo_docking2
   laser_geometry
   neo_msgs2
   neo_srvs2
+  neo_actions2
   )
 
 ament_target_dependencies(safety_mode_test_server
   rclcpp
+  rclcpp_action
   neo_msgs2
-  neo_srvs2
+  neo_actions2
   )
 
 target_include_directories(neo_docking2 PUBLIC
