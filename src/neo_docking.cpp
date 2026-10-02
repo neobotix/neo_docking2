@@ -29,6 +29,7 @@ SOFTWARE.
 #include <tf2_ros/transform_listener.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -49,6 +50,7 @@ SOFTWARE.
 
 #include "neo_actions2/action/relay_board_set_safety_mode.hpp"
 #include "neo_msgs2/msg/docking_status.hpp"
+#include "neo_msgs2/msg/emergency_stop_state.hpp"
 #include "neo_msgs2/msg/safety_mode.hpp"
 
 using std::placeholders::_1;
@@ -147,6 +149,13 @@ public:
     safety_client_node_ = std::make_shared<rclcpp::Node>("safety_client_node");
     set_safety_client_ = rclcpp_action::create_client<SetSafetyMode>(
       safety_client_node_, "set_safety_mode");
+    emergency_stop_sub_ = safety_client_node_->create_subscription<
+      neo_msgs2::msg::EmergencyStopState>(
+      "emergency_stop_state", rclcpp::QoS(1),
+      [this](const neo_msgs2::msg::EmergencyStopState::SharedPtr msg)
+      {
+        scanner_stop_.store(msg->scanner_stop);
+      });
 
     buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
     transform_listener_ = std::make_shared<tf2_ros::TransformListener>(*buffer_);
@@ -359,9 +368,33 @@ public:
               set_approach_time = this->get_clock()->now();
               last_velocity_update = set_approach_time;
             }
+            if (!set_approaching_) {
+              const bool scanner_stop = scanner_stop_.load();
+              if (scanner_stop) {
+                RCLCPP_WARN(
+                  client_node_->get_logger(),
+                  "A scanner stop was raised while checking the contour of the Wallbox, "
+                  "and SM_APPROACHING could not be activated. Please check the protective "
+                  "field settings and restart the docking process.");
+              } else {
+                RCLCPP_WARN(
+                  client_node_->get_logger(),
+                  "SM_APPROACHING could not be activated while no scanner stop was active. "
+                  "Please restart the docking process.");
+              }
+              on_process_ = false;
+              nav_task_finished_ = false;
+              goal_reached_ = true;
+              docking_finished = true;
+              RCLCPP_INFO(
+                client_node_->get_logger(),
+                "Docking process finished - remaining x-distance: %f",
+                remaining_distance);
+            }
           }
         }
       }
+
 
       /** Set the conditions for the robot to dock. The laser-derived docking
         * pose is fixed in odom so map localization corrections cannot move the
@@ -889,6 +922,7 @@ private:
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr undocking_srv_;
 
   rclcpp_action::Client<SetSafetyMode>::SharedPtr set_safety_client_;
+  rclcpp::Subscription<neo_msgs2::msg::EmergencyStopState>::SharedPtr emergency_stop_sub_;
 
   std::unique_ptr<tf2_ros::Buffer> buffer_;
   std::shared_ptr<ContourMatching> contour_matching;
@@ -905,6 +939,7 @@ private:
   bool set_departing_ = false;
   bool set_none_ = false;
   bool goal_reached_ = false;
+  std::atomic_bool scanner_stop_{false};
 
   std::string scan_topic_ = "scan";
   std::string final_approach_frame_ = "odom";
