@@ -47,7 +47,7 @@ SOFTWARE.
 #include "std_srvs/srv/empty.hpp"
 #include "neo_perception2/contour_matching.hpp"
 
-#include "neo_srvs2/srv/relay_board_set_safety_mode.hpp"
+#include "neo_actions2/action/relay_board_set_safety_mode.hpp"
 #include "neo_msgs2/msg/docking_status.hpp"
 #include "neo_msgs2/msg/safety_mode.hpp"
 
@@ -66,6 +66,8 @@ public:
   using NavigateToPoseGoalHandle =
     rclcpp_action::ClientGoalHandle<nav2_msgs::action::NavigateToPose>;
   rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SendGoalOptions nav_to_goal_options;
+
+  using SetSafetyMode = neo_actions2::action::RelayBoardSetSafetyMode;
 
   std::shared_ptr<rclcpp::Node> safety_client_node_;
 
@@ -143,8 +145,8 @@ public:
 
     // Client for handling nbx_safety.
     safety_client_node_ = std::make_shared<rclcpp::Node>("safety_client_node");
-    set_safety_client_ = safety_client_node_->create_client
-      <neo_srvs2::srv::RelayBoardSetSafetyMode>("set_safety_mode");
+    set_safety_client_ = rclcpp_action::create_client<SetSafetyMode>(
+      safety_client_node_, "set_safety_mode");
 
     buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
     transform_listener_ = std::make_shared<tf2_ros::TransformListener>(*buffer_);
@@ -191,42 +193,62 @@ public:
 
   bool helper_set_safety(const uint8_t & mode)
   {
-    auto request = std::make_shared<neo_srvs2::srv::RelayBoardSetSafetyMode::Request>();
-    request->set_safety_mode.mode = mode;
-    request->station = 0;
+    SetSafetyMode::Goal goal;
+    goal.set_safety_mode.mode = mode;
+    goal.station = 0;
 
-    // Check service is available
-    while (!set_safety_client_->wait_for_service(1s)) {
+    // Check action server is available
+    while (!set_safety_client_->wait_for_action_server(1s)) {
       if (!rclcpp::ok()) {
         RCLCPP_ERROR(safety_client_node_->get_logger(),
-        "set_safety_mode service not found. Exiting.");
+        "set_safety_mode action server not found. Exiting.");
         return false;
       }
       RCLCPP_INFO(safety_client_node_->get_logger(),
-      "waiting for set_safety_mode service to be available");
+      "waiting for set_safety_mode action server to be available");
     }
 
-    // Send the request to set the safety
-    auto result = set_safety_client_->async_send_request(request);
-
-    if (result.wait_for(std::chrono::seconds(10)) == std::future_status::ready) {
-      // The request is complete, process the result
-      auto response = result.get();
-      if (response->success) {
-        RCLCPP_INFO(safety_client_node_->get_logger(), "Safety setting request succeeded");
-        return true;
-      } else {
-        RCLCPP_WARN(safety_client_node_->get_logger(), "Safety setting request failed");
+    try {
+      auto goal_handle_future = set_safety_client_->async_send_goal(goal);
+      if (goal_handle_future.wait_for(10s) != std::future_status::ready) {
+        RCLCPP_ERROR(
+          safety_client_node_->get_logger(),
+          "Timeout while waiting for the safety mode goal response");
         return false;
       }
-    } else {
-      // The request did not complete within the timeout
+
+      const auto goal_handle = goal_handle_future.get();
+      if (!goal_handle) {
+        RCLCPP_WARN(safety_client_node_->get_logger(), "Safety mode goal was rejected");
+        return false;
+      }
+
+      auto result_future = set_safety_client_->async_get_result(goal_handle);
+      if (result_future.wait_for(10s) != std::future_status::ready) {
+        RCLCPP_ERROR(
+          safety_client_node_->get_logger(),
+          "Timeout while waiting for the safety mode result");
+        return false;
+      }
+
+      const auto wrapped_result = result_future.get();
+      const bool succeeded =
+        wrapped_result.code == rclcpp_action::ResultCode::SUCCEEDED &&
+        wrapped_result.result && wrapped_result.result->success;
+      if (succeeded) {
+        RCLCPP_INFO(safety_client_node_->get_logger(), "Safety mode change succeeded");
+        return true;
+      }
+
+      RCLCPP_WARN(
+        safety_client_node_->get_logger(), "Safety mode change failed (result code: %d)",
+        static_cast<int>(wrapped_result.code));
+    } catch (const std::exception & ex) {
       RCLCPP_ERROR(
         safety_client_node_->get_logger(),
-        "Timeout while waiting for safety setting request to complete"
-      );
-      return false;
+        "Failed to set safety mode: %s", ex.what());
     }
+    return false;
   }
 
   void start_final_approach()
@@ -866,7 +888,7 @@ private:
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr docking_srv_;
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr undocking_srv_;
 
-  rclcpp::Client<neo_srvs2::srv::RelayBoardSetSafetyMode>::SharedPtr set_safety_client_;
+  rclcpp_action::Client<SetSafetyMode>::SharedPtr set_safety_client_;
 
   std::unique_ptr<tf2_ros::Buffer> buffer_;
   std::shared_ptr<ContourMatching> contour_matching;
