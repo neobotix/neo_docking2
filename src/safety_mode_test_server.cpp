@@ -25,41 +25,57 @@ SOFTWARE.
 #include <cstdint>
 #include <memory>
 
+#include "neo_actions2/action/relay_board_set_safety_mode.hpp"
 #include "neo_msgs2/msg/safety_mode.hpp"
-#include "neo_srvs2/srv/relay_board_set_safety_mode.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "rclcpp_action/rclcpp_action.hpp"
 
 class SafetyModeTestServer : public rclcpp::Node
 {
 public:
-  using SetSafetyMode = neo_srvs2::srv::RelayBoardSetSafetyMode;
+  using SetSafetyMode = neo_actions2::action::RelayBoardSetSafetyMode;
+  using GoalHandle = rclcpp_action::ServerGoalHandle<SetSafetyMode>;
 
   SafetyModeTestServer()
   : Node("safety_mode_test_server")
   {
-    service_ = create_service<SetSafetyMode>(
+    action_server_ = rclcpp_action::create_server<SetSafetyMode>(
+      this,
       "set_safety_mode",
       [this](
-        const std::shared_ptr<SetSafetyMode::Request> request,
-        std::shared_ptr<SetSafetyMode::Response> response)
+        const rclcpp_action::GoalUUID &,
+        const std::shared_ptr<const SetSafetyMode::Goal> goal)
       {
-        const uint8_t mode = request->set_safety_mode.mode;
-        response->success =
-          mode == neo_msgs2::msg::SafetyMode::SM_APPROACHING ||
-          mode == neo_msgs2::msg::SafetyMode::SM_DEPARTING;
-
         RCLCPP_INFO(
-          get_logger(), "Safety mode request: mode=%u, station=%u, success=%s",
-          static_cast<unsigned int>(mode),
-          static_cast<unsigned int>(request->station),
-          response->success ? "true" : "false");
+          get_logger(), "Safety mode goal: mode=%u, station=%u",
+          static_cast<unsigned int>(goal->set_safety_mode.mode),
+          static_cast<unsigned int>(goal->station));
+        return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+      },
+      [](const std::shared_ptr<GoalHandle>)
+      {
+        return rclcpp_action::CancelResponse::REJECT;
+      },
+      [](const std::shared_ptr<GoalHandle> goal_handle)
+      {
+        const uint8_t mode = goal_handle->get_goal()->set_safety_mode.mode;
+        auto result = std::make_shared<SetSafetyMode::Result>();
+        result->success =
+        mode == neo_msgs2::msg::SafetyMode::SM_APPROACHING ||
+        mode == neo_msgs2::msg::SafetyMode::SM_DEPARTING;
+
+        if (result->success) {
+          goal_handle->succeed(result);
+        } else {
+          goal_handle->abort(result);
+        }
       });
 
-    RCLCPP_INFO(get_logger(), "Test service 'set_safety_mode' is ready");
+    RCLCPP_INFO(get_logger(), "Test action 'set_safety_mode' is ready");
   }
 
 private:
-  rclcpp::Service<SetSafetyMode>::SharedPtr service_;
+  rclcpp_action::Server<SetSafetyMode>::SharedPtr action_server_;
 };
 
 int main(int argc, char ** argv)

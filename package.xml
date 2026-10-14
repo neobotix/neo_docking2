@@ -10,7 +10,7 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <exec_depend>rclcpp</exec_depend>
-  <exec_depend>rclcpp_action</exec_depend>
+  <depend>rclcpp_action</depend>
   <exec_depend>rclcpp_lifecycle</exec_depend>
   <exec_depend>visualization_msgs</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
@@ -23,7 +23,8 @@
   <exec_depend>tf2_geometry_msgs</exec_depend>
   <exec_depend>neo_perception2</exec_depend>
   <depend>neo_msgs2</depend>
-  <exec_depend>neo_srvs2</exec_depend>
+  <depend>neo_srvs2</depend>
+  <depend>neo_actions2</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
